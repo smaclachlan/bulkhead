@@ -11,6 +11,7 @@ the weight of host access it shouldn't have.
 - [Usage guide](#usage-guide)
   - [Configuration (`.env`)](#configuration-env)
   - [Custom workspace image](#custom-workspace-image)
+  - [Resetting the workspace](#resetting-the-workspace)
   - [Profiles - running multiple concurrent stacks](#profiles---running-multiple-concurrent-stacks)
   - [Git MCP setup (phase 3, code egress)](#git-mcp-setup-phase-3-code-egress)
   - [Kata Containers setup (phase 2, Workspace container)](#kata-containers-setup-phase-2-workspace-container)
@@ -87,6 +88,17 @@ The default Workspace image (`workspace/default.nix`) is deliberately minimal - 
 - `WORKSPACE_REPO_PATH` - where the shared working tree (the volume `git-mcp` clones/commits/pushes on the agent's behalf) is mounted inside both `git-mcp` and `workspace`. Defaults to `/repo`; override it if your Dockerfile's tooling expects the project root somewhere else. All three of the mount point, `git-mcp`'s own `GIT_REPO_PATH`, and `workspace`'s mount target read this one value, so they can't drift apart.
 
 One thing this doesn't solve for you: if your custom image runs as a non-root user, check that user can actually read/write the shared volume - `git-mcp` writes to it as its own container's (root) user, and a UID mismatch will surface as confusing permission errors in your build tooling rather than an obvious "wrong config" message.
+
+### Resetting the workspace
+
+Two commands, two different amounts of destruction:
+
+```
+nix run .#reset-workspace -- [env-file]    # fresh container, /repo untouched
+nix run .#reset-repo -- [env-file] [--yes] # also wipes /repo - asks to confirm
+```
+
+`reset-workspace` recreates the `workspace` container from its current image - undoes anything the agent changed inside the container itself (installed packages, `/tmp` files, etc.) without touching the shared working tree. `reset-repo` goes further: it also deletes the `workspace-repo` volume so `git-mcp` re-clones from the remote on next start - this destroys any uncommitted or unpushed local work, so it asks for a typed `yes` first (`--yes` skips that, for scripted use). Both take the same optional profile path as `down`/`git-unlock`.
 
 ### Profiles - running multiple concurrent stacks
 

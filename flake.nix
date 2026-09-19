@@ -306,6 +306,67 @@
               exec ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" exec git-mcp git-mcp-unlock
             '');
           };
+
+          # Recreates the workspace container fresh from its current image -
+          # undoes anything the agent changed inside it (installed packages,
+          # /tmp files, etc.) without touching the shared /repo volume.
+          # Usage: nix run .#reset-workspace -- [env-file]  (same profile
+          # convention as down/git-unlock.)
+          reset-workspace = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "bulkhead-reset-workspace" ''
+              set -euo pipefail
+              if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
+                echo "run this from the bulkhead repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
+                exit 1
+              fi
+              env_file="''${1:-.env}"
+              . scripts/lib/profile.sh
+              bulkhead_resolve_profile "$env_file" || exit 1
+              project_name="$BULKHEAD_PROJECT_NAME"
+              echo "== Recreating workspace (project: $project_name) - /repo is untouched ==" >&2
+              exec ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" up -d --force-recreate workspace
+            '');
+          };
+
+          # Wipes the shared workspace-repo volume too, so git-mcp re-clones
+          # from scratch - destroys any uncommitted/unpushed local work.
+          # Usage: nix run .#reset-repo -- [env-file] [--yes]  (--yes skips
+          # the confirmation prompt, for scripted use.)
+          reset-repo = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "bulkhead-reset-repo" ''
+              set -euo pipefail
+              if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
+                echo "run this from the bulkhead repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
+                exit 1
+              fi
+              yes=""
+              env_file=".env"
+              for arg in "$@"; do
+                case "$arg" in
+                  --yes) yes="1" ;;
+                  *) env_file="$arg" ;;
+                esac
+              done
+              . scripts/lib/profile.sh
+              bulkhead_resolve_profile "$env_file" || exit 1
+              project_name="$BULKHEAD_PROJECT_NAME"
+              volume="''${project_name}_workspace-repo"
+
+              if [ -z "$yes" ]; then
+                printf 'This destroys the "%s" volume (any uncommitted/unpushed work in /repo) and re-clones from the remote. Type "yes" to continue: ' "$volume" >&2
+                read -r confirm
+                [ "$confirm" = "yes" ] || { echo "aborted" >&2; exit 1; }
+              fi
+
+              dc() { ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" "$@"; }
+              echo "== Stopping workspace/git-mcp, wiping $volume, recreating fresh ==" >&2
+              dc stop workspace git-mcp
+              ${pkgs.docker}/bin/docker volume rm "$volume"
+              dc up -d --force-recreate workspace git-mcp
+            '');
+          };
         };
 
         devShells.default = pkgs.mkShell {
