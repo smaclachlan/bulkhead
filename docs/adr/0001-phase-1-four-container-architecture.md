@@ -51,6 +51,17 @@ we have to maintain by omission. Shell-shaped requests become one forwarding
 MCP tool (`workspace_exec`) that relays to Workspace MCP; the Orchestrator
 process itself never executes anything.
 
+**Refinement made during implementation:** the LLM is only ever given
+*Workspace* MCP as an attached server (`Agent(server_names=["workspace"])`);
+Chat MCP is reached by a small hand-rolled MCP client in the harness code
+itself (`orchestrator/chat_client.py`), not exposed to the LLM as a callable
+tool. Waiting for the next human message and relaying the LLM's final reply
+back is harness-level control flow — the LLM should not be able to decide,
+mid-reasoning, to call `chat_send` an arbitrary number of times with
+arbitrary text. This keeps the LLM's only callable tool surface to exactly
+one tool (`workspace_exec`), which is a strictly narrower reading of
+cornerstone 2 than "attach both MCP servers to the Agent" would have been.
+
 ### 3. Build system: Nix flake, one derivation per image
 
 Each container is its own Nix output (`packages.orchestrator-image`,

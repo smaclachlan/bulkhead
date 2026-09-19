@@ -87,13 +87,14 @@ Verified in this session: ran the real server locally (Python available, no Dock
 
 **Goal:** an `mcp-agent`-based harness with zero shell tools, wired to both MCP servers from Milestones 2 and 3.
 
-- [ ] `mcp-agent` configured with exactly two MCP server connections: Workspace MCP, Chat MCP. No other tools registered.
-- [ ] LLM provider configured per ADR-0001 §7 (one provider, API-key or OAuth via `mcp_agent.secrets.yaml`/env).
-- [ ] `workspace_exec(command)` wired as a straight passthrough to Workspace MCP's `exec` — confirm by code inspection that no local shell/subprocess call exists anywhere in the Orchestrator's own code path.
-- [ ] Chat loop: poll/receive from Chat MCP, send user message (+ any tool results) to the LLM, relay the LLM's reply back via `chat_send`.
-- [ ] Internet egress limited to the LLM provider's API/auth endpoints; internal network reaches Workspace MCP + Chat MCP only.
+- [x] `mcp-agent`'s `Agent` configured with exactly one MCP server in `server_names`: Workspace MCP (`mcp_agent.config.yaml`, server key `workspace`). Refinement vs. the original plan: Chat MCP is *not* given to the `Agent`/LLM as a callable server - `orchestrator/src/orchestrator/chat_client.py` talks to it directly with a raw MCP client instead, because waiting for human input and relaying the LLM's final reply is harness-level control flow, not something the LLM should decide to invoke mid-reasoning (see that file's docstring). The LLM's only callable tool is still exactly one: `workspace_exec`.
+- [x] LLM provider configured per ADR-0001 §7: Anthropic, via `mcp_agent.config.yaml` (`default_model`) + `mcp_agent.secrets.yaml`/`ANTHROPIC_API_KEY` env (`mcp_agent.secrets.yaml.example` checked in as the template; the real file is gitignored).
+- [x] `workspace_exec(command)` — confirmed by code inspection *and* by running it for real in this session: no local shell/subprocess call exists anywhere in the Orchestrator's own code (`orchestrator/src/orchestrator/` has none); mcp-agent namespaces Workspace MCP's `exec` tool as `workspace_exec` for the `workspace` server key, matching implementation.md's naming.
+- [x] Chat loop in `orchestrator/src/orchestrator/main.py`: `ChatClient.receive()` polls Chat MCP (30s timeout, retry on `None`), the message goes to `llm.generate_str()` (with `workspace_exec` available to the LLM), the reply is relayed back via `ChatClient.send()` — wrapped in try/except so one failed turn doesn't kill the loop.
+- [ ] Internet egress limited to the LLM provider's API/auth endpoints; internal network reaches Workspace MCP + Chat MCP only. (Network segmentation itself is Milestone 5's Compose file, not this milestone.)
 
 **Definition of done:** with Milestones 1-3 running, starting the Orchestrator and sending it a chat message that requires no tool use gets a reply relayed back through Chat MCP.
+Verified in this session, minus the actual LLM call (no Anthropic API key available in this sandbox): ran the real `MCPApp`/`Agent`/`ChatClient` stack locally against real (locally-run) Workspace MCP and Chat MCP servers. Confirmed `agent.list_tools()` shows exactly `["workspace_exec"]`, calling it executes a real command through the (stubbed-`docker`) exec path and returns real stdout, and `ChatClient.send()` delivers a message that shows up via Chat MCP's `/api/messages`. Also confirmed mcp-agent 0.2.6 requires `mcp<2` (it imports the pre-2.0 `mcp.server.fastmcp`/`streamablehttp_client` API) while workspace-mcp/chat-mcp use `mcp>=2` — each container's own isolated Python env makes this a non-issue, and a cross-version client/server interop check (mcp v1 client → mcp v2 server) passed. The one thing not exercised here is a real `generate_str()` call against the Anthropic API — needs `ANTHROPIC_API_KEY` on a machine that can reach it.
 
 ---
 

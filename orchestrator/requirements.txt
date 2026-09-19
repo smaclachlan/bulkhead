@@ -1,0 +1,8 @@
+# mcp-agent (0.2.x) targets the pre-2.0 `mcp` SDK API (FastMCP, the v1
+# streamable-http client shape); mcp>=2 renamed/changed those, so this
+# container pins mcp<2 rather than following workspace-mcp/chat-mcp's mcp>=2.
+# Each container has its own isolated environment, so this pin doesn't
+# conflict with the other two - see docs/adr/0001-phase-1-four-container-architecture.md.
+mcp>=1.0,<2
+mcp-agent>=0.2.6,<0.3
+anthropic>=0.40,<1

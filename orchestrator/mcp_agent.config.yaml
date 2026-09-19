@@ -1,0 +1,29 @@
+# mcp-agent configuration for the phase 1 Orchestrator.
+# Schema: https://github.com/lastmile-ai/mcp-agent/blob/main/src/mcp_agent/config.py
+#
+# Only one MCP server is registered here - Workspace MCP. Chat MCP is
+# reached directly by orchestrator/src/orchestrator/chat_client.py, not
+# through this Agent-facing server list - see main.py's docstring and
+# docs/adr/0001-phase-1-four-container-architecture.md.
+$schema: https://raw.githubusercontent.com/lastmile-ai/mcp-agent/refs/heads/main/schema/mcp-agent.config.schema.json
+
+name: pandora-orchestrator
+
+execution_engine: asyncio
+
+logger:
+  transports: [console]
+  level: info
+
+mcp:
+  servers:
+    # Server key "workspace" + Workspace MCP's "exec" tool is namespaced by
+    # mcp-agent as "workspace_exec" - the tool name implementation.md names.
+    workspace:
+      transport: streamable_http
+      url: "http://workspace-mcp:8801/mcp"
+
+# API key goes in mcp_agent.secrets.yaml (gitignored) or the ANTHROPIC_API_KEY
+# env var - see mcp_agent.secrets.yaml.example.
+anthropic:
+  default_model: claude-sonnet-5
