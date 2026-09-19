@@ -1,14 +1,14 @@
 {
   "phase": "phase-2",
-  "timestamp_utc": "2026-09-19T21-27-10Z",
-  "git_commit": "1cedaf33b5eccd4f8e83ca5475cb37cc5932f8e0",
+  "timestamp_utc": "2026-09-19T21-04-57Z",
+  "git_commit": "4c3ea7c3351d9b5184ce6248e1df70b32e003c0a",
   "git_dirty": true,
   "checks": [
     {
       "id": "step1.all-running",
-      "status": "pass",
-      "description": "all seven containers running",
-      "detail": "7/7 running"
+      "status": "fail",
+      "description": "all six containers running",
+      "detail": "7/6 running"
     },
     {
       "id": "step2.memory-mcp-no-egress",
@@ -50,7 +50,7 @@
       "id": "step3.presence-advances",
       "status": "pass",
       "description": "last_seen advances between polls",
-      "detail": "1789853068.5173988 -> 1789853098.529989"
+      "detail": "1789851728.1399887 -> 1789851758.1502314"
     },
     {
       "id": "step3.activity-sequence",
@@ -62,13 +62,13 @@
       "id": "step4.cli-roundtrip",
       "status": "pass",
       "description": "chat_mcp.cli send --wait round-tripped a real reply",
-      "detail": "bulkhead-cli-check-1789853120"
+      "detail": "bulkhead-cli-check-1789851788"
     },
     {
       "id": "step5.tool-use-through-proxy",
       "status": "pass",
       "description": "real exec via docker-socket-proxy reflected in reply",
-      "detail": "reply contained 'bulkhead-proxy-check-1789853123'"
+      "detail": "reply contained 'bulkhead-proxy-check-1789851790'"
     },
     {
       "id": "step6.memory-write",
@@ -80,7 +80,7 @@
       "id": "step6.memory-survives-restart",
       "status": "pass",
       "description": "marker entity survived a memory-mcp container restart",
-      "detail": "{\"text\": \"{\\n  \\\"entities\\\": [\\n    {\\n      \\\"name\\\": \\\"bulkhead-memory-check-1789853127\\\",\\n      \\\"entityType\\\": \\\"validation-check\\\",\\n      \\\"observations\\\": [\\n        \\\"written by scripts/validate-phase2.sh\\\"\\n      ]\\n    }\\n  ],\\n  \\\"relations\\\": []\\n}\"}"
+      "detail": "{\"text\": \"{\\n  \\\"entities\\\": [\\n    {\\n      \\\"name\\\": \\\"bulkhead-memory-check-1789851794\\\",\\n      \\\"entityType\\\": \\\"validation-check\\\",\\n      \\\"observations\\\": [\\n        \\\"written by scripts/validate-phase2.sh\\\"\\n      ]\\n    }\\n  ],\\n  \\\"relations\\\": []\\n}\"}"
     },
     {
       "id": "step7.cross-session-recall",
@@ -90,14 +90,14 @@
     },
     {
       "id": "step8.kata-runtime",
-      "status": "pass",
-      "description": "bulkhead-workspace's runtime is 'kata'",
+      "status": "skip",
+      "description": "Kata runtime check (WORKSPACE_RUNTIME != kata - expected on a checkout without Kata installed)",
       "detail": ""
     },
     {
       "id": "step8.kata-shim-process",
-      "status": "pass",
-      "description": "a containerd-shim-kata-v2 process is running for bulkhead-workspace's container ID",
+      "status": "skip",
+      "description": "Kata shim process check (WORKSPACE_RUNTIME != kata)",
       "detail": ""
     },
     {
@@ -108,9 +108,9 @@
     }
   ],
   "summary": {
-    "pass": 16,
-    "fail": 1,
-    "skip": 0,
+    "pass": 13,
+    "fail": 2,
+    "skip": 2,
     "total": 17
   }
 }
