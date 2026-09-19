@@ -1,0 +1,91 @@
+{
+  "phase": "phase-1",
+  "timestamp_utc": "2026-09-19T12-03-16Z",
+  "git_commit": "464b5a69d1b0c169e4f27366edff48cebb7a9df2",
+  "git_dirty": true,
+  "checks": [
+    {
+      "id": "step1.all-running",
+      "status": "pass",
+      "description": "all four containers running",
+      "detail": "4/4 running"
+    },
+    {
+      "id": "step1.chat-url-logged",
+      "status": "pass",
+      "description": "chat-mcp logged its UI URL",
+      "detail": ""
+    },
+    {
+      "id": "step2.workspace-no-network",
+      "status": "pass",
+      "description": "pandora-workspace NetworkMode is 'none'",
+      "detail": ""
+    },
+    {
+      "id": "step2.chat-mcp-no-egress",
+      "status": "pass",
+      "description": "chat-mcp has no internet egress",
+      "detail": ""
+    },
+    {
+      "id": "step2.workspace-mcp-no-egress",
+      "status": "pass",
+      "description": "workspace-mcp has no internet egress",
+      "detail": ""
+    },
+    {
+      "id": "step3.token-found",
+      "status": "pass",
+      "description": "found chat-mcp token in logs",
+      "detail": ""
+    },
+    {
+      "id": "step3.auth-gate",
+      "status": "pass",
+      "description": "chat UI without token returns 403",
+      "detail": ""
+    },
+    {
+      "id": "step3.ui-loads",
+      "status": "pass",
+      "description": "chat UI with token returns 200",
+      "detail": ""
+    },
+    {
+      "id": "step4.tool-use",
+      "status": "pass",
+      "description": "reply reflects real command output",
+      "detail": "reply contained 'harness-check-1789819388'"
+    },
+    {
+      "id": "step5.audit-logged",
+      "status": "pass",
+      "description": "workspace-mcp logged a new exec call",
+      "detail": "4 -> 5"
+    },
+    {
+      "id": "step5.file-in-container",
+      "status": "pass",
+      "description": "file independently re-read inside pandora-workspace",
+      "detail": "contents: harness-check-1789819388"
+    },
+    {
+      "id": "step5.no-host-leak",
+      "status": "pass",
+      "description": "no pandora-validate-1789819388.txt leaked onto the host filesystem",
+      "detail": ""
+    },
+    {
+      "id": "step6.no-op-survives",
+      "status": "pass",
+      "description": "loop survived a no-op turn without restarting",
+      "detail": "restarts: 0 -> 0"
+    }
+  ],
+  "summary": {
+    "pass": 13,
+    "fail": 0,
+    "total": 13
+  }
+}

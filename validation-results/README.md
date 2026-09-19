@@ -1,0 +1,36 @@
+# Validation results
+
+Attestation trail produced by `scripts/validate-<phase>.sh` (currently just
+`scripts/validate-phase1.sh`). Each run appends a timestamped JSON record
+under `<phase>/`, plus overwrites `<phase>/latest.json` for convenience.
+
+These are committed to git deliberately - the point is a durable, append-only
+record of when the containment properties in
+`docs/adr/0001-phase-1-four-container-architecture.md` were actually checked
+and what the result was, not just a pass/fail shown once in a terminal.
+That includes checks that speak MCP directly to `workspace-mcp`'s endpoint
+(bypassing the chat/LLM path) to probe tool listing, tool schema, real
+exec/filesystem access, and cross-container reachability - a check failing
+here (e.g. `step7.cross-container-isolation`) is meant to surface a real gap
+against the ADR's stated intent, not be explained away.
+
+## Record shape
+
+```json
+{
+  "phase": "phase-1",
+  "timestamp_utc": "2026-09-19T14-00-00Z",
+  "git_commit": "<sha of HEAD at run time>",
+  "git_dirty": false,
+  "checks": [
+    {"id": "step2.workspace-no-network", "status": "pass", "description": "...", "detail": "..."}
+  ],
+  "summary": {"pass": 9, "fail": 0, "total": 9}
+}
+```
+
+## Adding a new phase
+
+Copy the latest `scripts/validate-phaseN.sh` as a starting point, change its
+`PHASE` variable, and add `check_step*` logic for that phase's own runbook.
+The `record`/JSON-writing plumbing at the bottom is already phase-agnostic.
