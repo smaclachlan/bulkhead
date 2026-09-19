@@ -268,10 +268,10 @@ async def main():
     out = {}
     try:
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import streamable_http_client
 
         url, mode, marker = sys.argv[1], sys.argv[2], sys.argv[3]
-        async with streamablehttp_client(url) as (read, write, _):
+        async with streamable_http_client(url) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()
@@ -384,15 +384,28 @@ fi
 # "reachable from Orchestrator only" - Compose's `internal: true` blocks
 # egress to the outside world, but doesn't isolate members of the same
 # network from each other. Report what's actually true rather than assume
-# the ADR's intent is enforced.
-raw_cross="$(run_mcp_check chat-mcp "http://workspace-mcp:8801/mcp" list "$marker7")"
-json_cross="$(extract_json "$raw_cross")"
-if [ -n "$json_cross" ] && printf '%s' "$json_cross" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('tools') else 1)" 2>/dev/null; then
+# the ADR's intent is enforced. Deliberately a plain TCP connect test, not
+# an MCP-protocol call - this only needs to answer "can it reach the port at
+# all", and shouldn't be at the mercy of the mcp SDK's client API shape.
+tcp_probe="$(docker compose exec -T chat-mcp python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(3)
+try:
+    s.connect(('workspace-mcp', 8801))
+    print('reachable')
+except OSError as e:
+    print(f'unreachable: {e}')
+finally:
+    s.close()
+" 2>&1)"
+
+if printf '%s' "$tcp_probe" | grep -q '^reachable'; then
   record step7.cross-container-isolation fail \
-    "chat-mcp cannot reach workspace-mcp (per ADR-0001 section 1)" \
-    "chat-mcp successfully listed workspace-mcp's tools over the internal network - the 'internal' Compose network doesn't isolate members from each other, only from the outside world. This is a real gap vs. the ADR's stated intent, not a phase-1 blocker but worth tracking (e.g. a phase-2 network policy or splitting workspace-mcp onto its own network reachable only by orchestrator)."
+    "chat-mcp cannot reach workspace-mcp's port (per ADR-0001 section 1)" \
+    "chat-mcp opened a TCP connection to workspace-mcp:8801 - the 'internal' Compose network doesn't isolate members from each other, only from the outside world. Real gap vs. the ADR's stated intent, not a phase-1 blocker but worth tracking (e.g. a phase-2 network policy or splitting workspace-mcp onto its own network reachable only by orchestrator)."
 else
-  record step7.cross-container-isolation pass "chat-mcp cannot reach workspace-mcp" "$json_cross"
+  record step7.cross-container-isolation pass "chat-mcp cannot reach workspace-mcp's port" "$tcp_probe"
 fi
 
 # ---- Write the attestation record --------------------------------------
