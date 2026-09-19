@@ -159,9 +159,9 @@ def cmd_send(args: argparse.Namespace, base: str, token: str) -> None:
 
 
 def _poll_loop(base: str, token: str, since: "list[int]", stop: threading.Event) -> None:
-    """Background thread: prints new messages (either side - matches the
-    browser UI's own always-reprint-the-transcript behaviour) as they
-    arrive, independent of whether the user is mid-input. `since` is a
+    """Background thread: prints new agent replies as they arrive,
+    independent of whether the user is mid-input. Skips user messages - the
+    terminal's own line echo already showed those when typed. `since` is a
     1-element list used as a mutable box so this thread and the main thread
     share one cursor without needing a lock for a single int assignment."""
     while not stop.is_set():
@@ -169,8 +169,9 @@ def _poll_loop(base: str, token: str, since: "list[int]", stop: threading.Event)
             data = _get(base, f"/api/messages?since={since[0]}", token)
             for m in data["messages"]:
                 since[0] = max(since[0], m["id"])
-                prefix = "you" if m["role"] == "user" else "agent"
-                print(f"\n[{prefix}] {_format_reply(m['text'])}\n{PROMPT}", end="", flush=True)
+                if m["role"] == "user":
+                    continue
+                print(f"\n[agent] {_format_reply(m['text'])}\n{PROMPT}", end="", flush=True)
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
             pass  # transient - the next poll retries; don't kill the thread over one bad response
         stop.wait(1.0)
