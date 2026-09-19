@@ -8,9 +8,19 @@
 #
 # Network segmentation:
 #   - workspace: no network at all (README point 4).
-#   - internal:  an `internal: true` network with no route to the outside
-#     world - workspace-mcp and chat-mcp live here, reachable only from
-#     the orchestrator.
+#   - internal-workspace: an `internal: true` network joined only by
+#     workspace-mcp and orchestrator. ADR-0001 §1 says workspace-mcp should
+#     be reachable from the Orchestrator only - phase 1's validation harness
+#     (validation-results/phase-1/) found that a single shared `internal`
+#     network doesn't actually enforce that (Compose's `internal: true`
+#     blocks egress to the outside world, but does NOT isolate members of
+#     the same network from each other - chat-mcp could open a TCP
+#     connection straight to workspace-mcp:8801). Splitting workspace-mcp
+#     onto its own network that chat-mcp never joins closes that gap.
+#   - internal-chat: a second `internal: true` network joined only by
+#     chat-mcp and orchestrator, for the `chat_send`/`chat_receive` MCP
+#     path - kept separate from internal-workspace precisely so chat-mcp
+#     has no route to workspace-mcp (or vice versa).
 #   - egress:    normal outbound network, attached only to orchestrator,
 #     for the LLM provider's API/auth endpoints.
 #   - chat-ui:   a second network for chat-mcp only, used solely to publish
@@ -22,7 +32,9 @@
 #     the outside world - only to the host via the published port.
 
 networks:
-  internal:
+  internal-workspace:
+    internal: true
+  internal-chat:
     internal: true
   egress: {}
   chat-ui:
@@ -38,7 +50,7 @@ services:
 
   workspace-mcp:
     image: pandora-workspace-mcp:dev
-    networks: [internal]
+    networks: [internal-workspace]
     environment:
       - WORKSPACE_CONTAINER_ID=pandora-workspace
     volumes:
@@ -51,19 +63,19 @@ services:
 
   chat-mcp:
     image: pandora-chat-mcp:dev
-    networks: [internal, chat-ui]
+    networks: [internal-chat, chat-ui]
     environment:
       - CHAT_MCP_TOKEN=${CHAT_MCP_TOKEN:-}
     ports:
       # Only the human-facing UI port is published, and only to loopback.
       # The MCP port (8802) stays internal-only, reachable solely from the
-      # orchestrator over the `internal` network.
+      # orchestrator over the `internal-chat` network.
       - "127.0.0.1:8787:8787"
     restart: on-failure
 
   orchestrator:
     image: pandora-orchestrator:dev
-    networks: [internal, egress]
+    networks: [internal-workspace, internal-chat, egress]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CHAT_MCP_URL=http://chat-mcp:8802/mcp
