@@ -1,0 +1,64 @@
+# Phase 1 topology - see docs/adr/0001-phase-1-four-container-architecture.md
+# and docs/plans/phase-1-implementation-plan.md (Milestone 5).
+#
+# Images are pre-built (not built by Compose itself): `workspace` via
+# `nix build .#workspace-image` + `docker load`, the other three via
+# `nix run .#build-<name>-image` (plain `docker build`). `nix run .#up`
+# does both steps before invoking this file - see flake.nix.
+#
+# Network segmentation:
+#   - workspace: no network at all (README point 4).
+#   - internal:  an `internal: true` network with no route to the outside
+#     world - workspace-mcp and chat-mcp live here, reachable only from
+#     the orchestrator (and, for chat-mcp's UI, the host loopback via the
+#     one published port below).
+#   - egress:    normal outbound network, attached only to orchestrator,
+#     for the LLM provider's API/auth endpoints.
+
+networks:
+  internal:
+    internal: true
+  egress: {}
+
+services:
+  workspace:
+    image: pandora-workspace:dev
+    container_name: pandora-workspace
+    network_mode: "none"
+    restart: on-failure
+
+  workspace-mcp:
+    image: pandora-workspace-mcp:dev
+    networks: [internal]
+    environment:
+      - WORKSPACE_CONTAINER_ID=pandora-workspace
+    volumes:
+      # The only container in the topology with this mount - see
+      # docs/adr/0001-phase-1-four-container-architecture.md §5.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - workspace
+    restart: on-failure
+
+  chat-mcp:
+    image: pandora-chat-mcp:dev
+    networks: [internal]
+    environment:
+      - CHAT_MCP_TOKEN=${CHAT_MCP_TOKEN:-}
+    ports:
+      # Only the human-facing UI port is published, and only to loopback.
+      # The MCP port (8802) stays internal-only, reachable solely from the
+      # orchestrator over the `internal` network.
+      - "127.0.0.1:8787:8787"
+    restart: on-failure
+
+  orchestrator:
+    image: pandora-orchestrator:dev
+    networks: [internal, egress]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CHAT_MCP_URL=http://chat-mcp:8802/mcp
+    depends_on:
+      - workspace-mcp
+      - chat-mcp
+    restart: on-failure

@@ -102,15 +102,16 @@ Verified in this session, minus the actual LLM call (no Anthropic API key availa
 
 **Goal:** one command brings up all four containers with the correct network segmentation.
 
-- [ ] `docker-compose.yml` (hand-written or generated from the flake — ADR-0001 §4) defining:
-  - Workspace: `network: none`.
-  - Workspace MCP: internal-only network shared with Orchestrator; `/var/run/docker.sock` bind mount; Docker socket access sufficient to `exec` into the Workspace container by name/ID.
-  - Chat MCP: `127.0.0.1` port publish only; same internal network as Orchestrator.
-  - Orchestrator: internal network (reaching Workspace MCP + Chat MCP) + internet egress; **no** other port publishes, no volume mounts that would grant filesystem access.
-- [ ] `apps.up` (`nix run .#up`) builds all four images and runs `docker compose up`.
-- [ ] `restart: on-failure` (or equivalent) on each service per ADR-0001 §4.
+- [x] `docker-compose.yml` (hand-written per ADR-0001 §4) defining:
+  - Workspace: `network_mode: "none"`.
+  - Workspace MCP: `internal: true` network shared with Orchestrator (no route to the outside world); `/var/run/docker.sock` bind mount; targets the Workspace container by its fixed `container_name`.
+  - Chat MCP: `127.0.0.1:8787:8787` published (UI only) — the MCP port (8802) stays on the internal network only, reachable solely from the Orchestrator.
+  - Orchestrator: `internal` network (reaching Workspace MCP + Chat MCP) + a separate `egress` network for internet access; no ports published, no volume mounts.
+- [x] `apps.up` (`nix run .#up`) builds `workspace-image` via `nix build` + `docker load`, builds the other three via `docker build`, then runs `docker compose up`. Also added `build-{workspace-mcp,chat-mcp,orchestrator}-image` as standalone apps for iterating on one image at a time.
+- [x] `restart: on-failure` on each service per ADR-0001 §4.
 
 **Definition of done:** `nix run .#up` on a clean checkout brings up all four containers; `docker network inspect` confirms Workspace has no network attached and Workspace MCP/Chat MCP are not internet-reachable; only Orchestrator has an egress path out.
+Not runnable in this sandbox (no Nix or Docker) — needs verifying on a machine with both, per the user's note that they'll check each milestone there. One thing worth double-checking on that machine: `docker-compose`'s `internal: true` network semantics can vary slightly by Compose/Docker version, so confirm egress is actually blocked, e.g. `docker compose exec chat-mcp python3 -c "import urllib.request; urllib.request.urlopen('https://example.com', timeout=3)"` should raise/timeout, not succeed.
 
 ---
 
