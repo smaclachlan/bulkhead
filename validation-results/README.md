@@ -23,6 +23,7 @@ against the ADR's stated intent, not be explained away.
   "timestamp_utc": "2026-09-19T14-00-00Z",
   "git_commit": "<sha of HEAD at run time>",
   "git_dirty": false,
+  "project": "bulkhead",
   "checks": [
     {"id": "step2.workspace-no-network", "status": "pass", "description": "...", "detail": "..."}
   ],
@@ -36,6 +37,18 @@ the Kata runtime check, only meaningful when `WORKSPACE_RUNTIME=kata` is
 set - see `docs/plans/phase-2-validation.md`). A skip is recorded in
 `checks`/`summary.skip` but doesn't count toward `pass`/`fail`, and doesn't
 affect the script's exit code.
+
+`validate-phase2.sh`/`validate-phase3.sh` also take an optional profile
+env-file argument (e.g. `sh scripts/validate-phase2.sh ./rust-build.conf`),
+same convention as `nix run .#up`/`down`/`git-unlock` - see README's
+"Workspace image and concurrent profiles". The `"project"` field records
+which profile a run targeted (`"bulkhead"` for the default one). The
+default profile's own paths and filenames are unchanged by this - a
+non-default profile's results are kept out of its way, nested one level
+deeper at `<phase>/profiles/<project-name>/` (its own timestamped files
+plus its own `latest.json`), so two concurrently-validated profiles never
+stomp each other's records. Records written before this field existed
+simply lack `"project"` - that's expected, not a schema violation.
 
 ## Adding a new phase
 
