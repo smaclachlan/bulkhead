@@ -72,6 +72,7 @@ Every Bulkhead setting lives in one `.env`-format file - copy `.env.example` to 
 
 - `ANTHROPIC_API_KEY` - required; the Orchestrator's LLM calls.
 - `CHAT_MCP_TOKEN` - pin the Chat UI's access token instead of a fresh random one per boot (either way it's printed by `nix run .#up` / visible in `docker compose logs chat-mcp`).
+- `CHAT_SHOW_TOOL_CALLS` - off by default, so the chat transcript only shows the agent's actual replies. Set to `1`/`true`/`yes` to keep the underlying `[Calling tool X with args Y]` notices mcp-agent bakes into its output - both the browser UI and `nix run .#chat` render those lines in italics so they're still visually distinct from the real reply.
 - `WORKSPACE_RUNTIME`, `WORKSPACE_DOCKERFILE_DIR`, `WORKSPACE_REPO_PATH` - see [Custom workspace image](#custom-workspace-image) and [Kata Containers setup](#kata-containers-setup-phase-2-workspace-container).
 - `CHAT_UI_HOST_PORT` - see [Profiles](#profiles---running-multiple-concurrent-stacks).
 - `GIT_REMOTE_URL`, `GIT_SSH_DEPLOY_KEY_HOST_PATH`, `GIT_PUSH_BRANCH_PATTERN` - see [Git MCP setup](#git-mcp-setup-phase-3-code-egress).

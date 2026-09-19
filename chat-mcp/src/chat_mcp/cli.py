@@ -50,6 +50,22 @@ import urllib.request
 
 PROMPT = "> "
 
+# Orchestrator strips these by default (CHAT_SHOW_TOOL_CALLS off) - only
+# present at all when that flag is set, in which case mcp-agent's own
+# "[Calling tool X with args Y]" notices are left in the message text as-is
+# (see orchestrator/src/orchestrator/main.py). Rendered here in ANSI
+# italics, same distinction the browser UI draws via CSS, so they read as
+# internal plumbing rather than part of the actual reply.
+_TOOL_CALL_LINE = re.compile(r"^\[Calling tool .*\]$")
+_ITALIC, _RESET = "\033[3m", "\033[0m"
+
+
+def _format_reply(text: str) -> str:
+    return "\n".join(
+        f"{_ITALIC}{line}{_RESET}" if _TOOL_CALL_LINE.match(line) else line
+        for line in text.split("\n")
+    )
+
 
 def _url(base: str, path: str, token: str) -> str:
     sep = "&" if "?" in path else "?"
@@ -134,7 +150,7 @@ def cmd_send(args: argparse.Namespace, base: str, token: str) -> None:
         for m in data["messages"]:
             since = max(since, m["id"])
             if m["role"] != "user":
-                print(m["text"])
+                print(_format_reply(m["text"]))
                 return
         time.sleep(1)
 
@@ -154,7 +170,7 @@ def _poll_loop(base: str, token: str, since: "list[int]", stop: threading.Event)
             for m in data["messages"]:
                 since[0] = max(since[0], m["id"])
                 prefix = "you" if m["role"] == "user" else "agent"
-                print(f"\n[{prefix}] {m['text']}\n{PROMPT}", end="", flush=True)
+                print(f"\n[{prefix}] {_format_reply(m['text'])}\n{PROMPT}", end="", flush=True)
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
             pass  # transient - the next poll retries; don't kill the thread over one bad response
         stop.wait(1.0)

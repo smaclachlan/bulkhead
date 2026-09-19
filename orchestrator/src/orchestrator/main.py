@@ -78,6 +78,24 @@ Keep replies concise - they are shown in a chat UI.
 
 _APPROVAL_COMMAND = re.compile(r"^(approve|deny)\s+([0-9a-f]+)$", re.IGNORECASE)
 
+# mcp-agent's own AugmentedLLM.generate_str() bakes tool-use notices
+# ("[Calling tool <name> with args <input>]") directly into the text it
+# returns, interleaved with the actual reply - there's no separate field to
+# pull them out of after the fact, and no hook to suppress them at the
+# source (they're synthesized inside the installed mcp-agent package, not
+# this codebase). CHAT_SHOW_TOOL_CALLS (default off) controls whether they
+# reach the chat transcript at all: off, they're stripped below before
+# chat.send(); on, they're left in as-is and chat-mcp's UI/CLI render lines
+# matching this same pattern in italics to tell them apart from the actual
+# reply (see chat-mcp/src/chat_mcp/static/index.html and cli.py).
+_TOOL_CALL_LINE = re.compile(r"^\[Calling tool .*\]$")
+
+
+def _strip_tool_call_lines(text: str) -> str:
+    return "\n".join(
+        line for line in text.split("\n") if not _TOOL_CALL_LINE.match(line)
+    ).strip()
+
 
 def _pending_notice(pending: list[dict]) -> str:
     lines = [
@@ -94,6 +112,7 @@ async def run() -> None:
     chat_url = os.environ.get("CHAT_MCP_URL", "http://chat-mcp:8802/mcp")
     git_admin_url = os.environ.get("GIT_MCP_ADMIN_URL", "http://git-mcp:8806/mcp")
     poll_timeout = int(os.environ.get("CHAT_POLL_TIMEOUT_SECONDS", "30"))
+    show_tool_calls = os.environ.get("CHAT_SHOW_TOOL_CALLS", "").strip().lower() in ("1", "true", "yes")
 
     async with app.run() as agent_app:
         agent = Agent(
@@ -148,6 +167,8 @@ async def run() -> None:
                     reply = f"Sorry, something went wrong handling that: {exc}"
                     await chat.set_status("error")
                 else:
+                    if not show_tool_calls:
+                        reply = _strip_tool_call_lines(reply)
                     pending = await git_admin.pending()
                     if pending:
                         reply += _pending_notice(pending)

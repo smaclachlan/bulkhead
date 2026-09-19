@@ -246,6 +246,13 @@ services:
       # reached directly by git_admin_client.py, not via mcp_agent.config.yaml
       # /server_names - see ADR-0003 Decision 3.
       - GIT_MCP_ADMIN_URL=http://git-mcp:8806/mcp
+      # Off by default: main.py strips mcp-agent's own
+      # "[Calling tool X with args Y]" notices out of the reply before
+      # relaying it to chat-mcp, so the chat transcript only shows the
+      # actual answer. Set to 1/true/yes to keep them - chat-mcp's UI/CLI
+      # then render matching lines in italics to tell them apart from the
+      # real reply.
+      - CHAT_SHOW_TOOL_CALLS=${CHAT_SHOW_TOOL_CALLS:-}
     depends_on:
       - workspace-mcp
       - chat-mcp
