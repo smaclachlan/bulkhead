@@ -135,7 +135,33 @@
               # `up` itself, hence the `|| true`.
               ${pkgs.docker-compose}/bin/docker-compose exec git-mcp git-mcp-unlock || true
 
+              # chat-mcp prints its (freshly-generated-per-boot, unless
+              # CHAT_MCP_TOKEN is pinned in .env) URL+token to its own stdout
+              # once at startup - server.py's _resolve_token/`_run`. With
+              # `up` foregrounded that used to scroll past on screen for
+              # free; detached, it only lives in `docker compose logs
+              # chat-mcp` (same place chat-mcp/src/chat_mcp/cli.py's
+              # _discover_token already looks), so fetch and print it here
+              # instead of leaving that as a manual step too.
+              chat_line=""
+              attempt=0
+              while [ -z "$chat_line" ]; do
+                # `|| true`: grep exits 1 on no match yet (expected on early
+                # attempts), which pipefail would otherwise propagate and
+                # trip `set -e`, aborting this whole script.
+                chat_line="$(${pkgs.docker-compose}/bin/docker-compose logs chat-mcp 2>/dev/null \
+                  | grep -o 'chat UI: http://[^[:space:]]*' | tail -n1 || true)"
+                [ -n "$chat_line" ] && break
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 20 ]; then
+                  echo "chat-mcp hasn't printed its URL yet - check 'docker compose logs chat-mcp'" >&2
+                  break
+                fi
+                sleep 0.5
+              done
+
               echo "== Stack is up. 'docker compose logs -f <service>' to tail logs;" >&2
+              [ -n "$chat_line" ] && echo "   $chat_line" >&2
               echo "   're-run nix run .#git-unlock' any time (e.g. after a git-mcp restart);" >&2
               echo "   'nix run .#down' to stop it. ==" >&2
             '');
