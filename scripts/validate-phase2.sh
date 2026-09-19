@@ -66,13 +66,21 @@ docker compose ps >/dev/null 2>&1 || abort "'docker compose ps' failed - is the 
 
 # ---- Step 1: stack up --------------------------------------------------
 
-echo "== Step 1: stack up (six containers) =="
+echo "== Step 1: stack up (seven containers) =="
 
+# Was 6 (workspace, docker-socket-proxy, workspace-mcp, memory-mcp,
+# chat-mcp, orchestrator) when this script was written for phase 2 alone.
+# ADR-0003 (phase 3) added git-mcp to the same docker-compose.yml, so any
+# checkout with that change now legitimately runs seven - matches
+# validate-phase3.sh's own step1, which already expects 7. Left at 6 this
+# would report a false step1 failure ("7/6 running") on every phase-2 run
+# against current docker-compose.yml, masking real regressions in the
+# noise.
 running_count="$(docker compose ps --status running -q | wc -l | tr -d ' ')"
-if [ "$running_count" -eq 6 ]; then
-  record step1.all-running pass "all six containers running" "$running_count/6 running"
+if [ "$running_count" -eq 7 ]; then
+  record step1.all-running pass "all seven containers running" "$running_count/7 running"
 else
-  record step1.all-running fail "all six containers running" "$running_count/6 running"
+  record step1.all-running fail "all seven containers running" "$running_count/7 running"
 fi
 
 # ---- Step 2: network segmentation --------------------------------------
@@ -447,14 +455,36 @@ fi
 echo
 echo "== Step 8: Kata runtime (ADR-0002 Decision 1, opt-in) =="
 
-if [ "${WORKSPACE_RUNTIME:-runc}" != "kata" ]; then
-  skip step8.kata-runtime "Kata runtime check (WORKSPACE_RUNTIME != kata - expected on a checkout without Kata installed)"
+# Gated on bulkhead-workspace's actual observed runtime, not the
+# WORKSPACE_RUNTIME env var - that var only controls what `docker
+# compose up` requests at container-creation time (read from .env by
+# Compose itself), so a shell that doesn't happen to have it exported has
+# no bearing on what the already-running container was actually created
+# with. Asking Docker directly means this step behaves correctly whether
+# it's invoked bare, with .env sourced, or with the var overridden by
+# hand - and it also means a stale `.env` (edited after the stack was last
+# brought up) gets caught as a real mismatch instead of masked.
+runtime="$(docker inspect bulkhead-workspace --format '{{.HostConfig.Runtime}}' 2>/dev/null)"
+if [ "$runtime" != "kata" ]; then
+  skip step8.kata-runtime "Kata runtime check (bulkhead-workspace's actual runtime is '${runtime:-<container not found>}', not kata - expected on a checkout without Kata opted in)"
+  skip step8.kata-shim-process "Kata shim process check (bulkhead-workspace's actual runtime is '${runtime:-<container not found>}', not kata)"
 else
-  runtime="$(docker inspect bulkhead-workspace --format '{{.HostConfig.Runtime}}' 2>/dev/null)"
-  if [ "$runtime" = "kata" ]; then
-    record step8.kata-runtime pass "bulkhead-workspace's runtime is 'kata'"
+  record step8.kata-runtime pass "bulkhead-workspace's runtime is 'kata'"
+
+  # docker inspect's runtime label only reflects what Docker was told, not
+  # what actually happened (see phase-2-validation.md's "manual-only
+  # checks" rationale - a config-only regression could say `kata` while
+  # actually running under `runc`). A real Kata sandbox always has a
+  # containerd-shim-kata-v2 process backing that specific container ID -
+  # runc's namespace/cgroup containers have no such process at all - so
+  # this catches that regression without needing the full guest/host
+  # kernel-diff probe (still manual - see that doc - since only a human
+  # can compare against the *host's* kernel from outside the harness).
+  container_id="$(docker inspect bulkhead-workspace --format '{{.Id}}' 2>/dev/null)"
+  if [ -n "$container_id" ] && ps -eo cmd 2>/dev/null | grep -v grep | grep -q "containerd-shim-kata-v2.*${container_id}"; then
+    record step8.kata-shim-process pass "a containerd-shim-kata-v2 process is running for bulkhead-workspace's container ID"
   else
-    record step8.kata-runtime fail "bulkhead-workspace's runtime is 'kata'" "got '$runtime'"
+    record step8.kata-shim-process fail "a containerd-shim-kata-v2 process is running for bulkhead-workspace's container ID" "no matching process found for ${container_id:-<unknown container id>} - runtime label says kata but no real shim/VMM is backing it"
   fi
 fi
 
