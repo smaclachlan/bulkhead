@@ -57,19 +57,27 @@ Notes:
 
 See [ADR-0002 Decision 1](docs/adr/0002-phase-2-isolation-ux-memory.md#decision) - `docker-compose.yml`'s `workspace` service takes its OCI runtime from `WORKSPACE_RUNTIME` (default `runc`, so an unmodified checkout still works without Kata installed).
 
-**Not via Nix.** `nixpkgs` only has `pkgs.kata-runtime` (the `containerd-shim-kata-v2` binary) - it doesn't package the guest kernel/rootfs image Kata also needs to boot a microVM, and on a non-NixOS host Nix doesn't manage `/etc/docker/daemon.json` either way. Use Kata's own installer instead, which pulls a matching release (shim + guest kernel + guest image + configs together) and can configure Docker directly:
+**Not via Nix.** `nixpkgs` only has `pkgs.kata-runtime` (the `containerd-shim-kata-v2` binary) - it doesn't package the guest kernel/rootfs image Kata also needs to boot a microVM, and on a non-NixOS host Nix doesn't manage `/etc/docker/daemon.json` either way. There's also no `apt` package for it (checked both Debian and Ubuntu).
 
-1. ```
-   curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh | bash -s -- -D
-   ```
-   (`-D` configures Docker; drop it to configure containerd instead. Needs KVM - see below.)
-2. Register `kata` as a Docker runtime in `/etc/docker/daemon.json`. Kata ships a containerd **shim-v2** binary, not a classic OCI-runtime CLI, so this needs a `runtimeType`, not a `path`:
-   ```json
-   { "runtimes": { "kata": { "runtimeType": "io.containerd.kata.v2" } } }
-   ```
-   then `sudo systemctl restart docker`.
-3. Validate Kata itself works, independent of Pandora: `docker run --runtime=kata --rm busybox uname -r` should print a **different** kernel version than the host's own `uname -r` - if it matches, Kata isn't really engaging even though the runtime name is accepted.
-4. Set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
+**`scripts/setup-kata-host.sh`** does this instead - Debian/Ubuntu only. Idempotent (safe to re-run; skips anything already done):
+
+```
+sh scripts/setup-kata-host.sh
+```
+
+It installs Docker (`docker.io` + the compose plugin) if missing, downloads and extracts Kata's pre-built release under `/opt/kata`, registers it in `/etc/docker/daemon.json` (merging in just the `kata` runtime entry - it won't touch anything else already in that file), and finishes by running `docker run --runtime kata --rm ubuntu:24.04 uname -r` to confirm the guest kernel actually differs from the host's. The registration Kata's own docs specify for Docker is a direct path to the shim binary plus its QEMU config, not a bare runtime-type name:
+```json
+{
+  "runtimes": {
+    "kata": {
+      "runtimeType": "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2",
+      "options": { "ConfigPath": "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml" }
+    }
+  }
+}
+```
+
+Once that script passes, set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
 
 If Pandora itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.
 
@@ -78,4 +86,4 @@ If Pandora itself runs inside a VM (a cloud dev box, CI), nested virtualization 
 - `docker info | grep -A5 Runtimes` should list `kata` alongside `runc`.
 - `docker inspect pandora-workspace --format '{{.HostConfig.Runtime}}'` → `kata`.
 - With `WORKSPACE_RUNTIME=kata` set in the environment, `sh scripts/validate-phase2.sh` runs its step 8 Kata check automatically instead of skipping it (see `docs/plans/phase-2-validation.md`).
-- The kernel-differential probe from step 3 above, run *through Pandora* rather than a bare `docker run`: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.
+- The same kernel-differential check `setup-kata-host.sh` ran against a bare `docker run`, but *through Pandora* this time: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.
