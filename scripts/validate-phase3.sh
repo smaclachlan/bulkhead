@@ -412,8 +412,17 @@ asyncio.run(main())
     # 2>&1 unfiltered, that single benign line made the very first
     # ls_remote call of a run look non-empty - i.e. "branch already exists"
     # - even though the actual ls-remote output (and the branch) was empty.
+    #
+    # Match on the distinctive phrase only, no ^/$ anchors - confirmed live
+    # that a fully-anchored pattern still let this line through even though
+    # it looked byte-for-byte identical on screen (docker compose exec -T's
+    # pty-less stream may carry a trailing \r or similar that isn't visibly
+    # obvious but breaks a strict end-of-line anchor). "Permanently added
+    # ... to the list of known hosts" is ssh's own fixed wording - specific
+    # enough that a loose match still can't collide with real ls-remote
+    # output (refs/sha1 lines never contain this phrase).
     docker compose exec -T git-mcp git -C /repo ls-remote origin "refs/heads/$1" 2>&1 \
-      | grep -v '^Warning: Permanently added .* to the list of known hosts\.$'
+      | grep -v 'Permanently added.*to the list of known hosts'
   }
 
   deny_branch="agent/bulkhead-validate-deny-$(date +%s)"

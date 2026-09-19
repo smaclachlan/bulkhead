@@ -1,0 +1,116 @@
+{
+  "phase": "phase-3",
+  "timestamp_utc": "2026-09-19T20-34-07Z",
+  "git_commit": "42fe06b80940ec1c7d2ab82163175545cbb2312f",
+  "git_dirty": true,
+  "checks": [
+    {
+      "id": "step1.all-running",
+      "status": "pass",
+      "description": "all seven containers running",
+      "detail": "7/7 running"
+    },
+    {
+      "id": "step2.workspace-mcp-cannot-reach-git-llm",
+      "status": "pass",
+      "description": "workspace-mcp cannot reach git-mcp's llm port (8805)",
+      "detail": "unreachable: [Errno -3] Temporary failure in name resolution"
+    },
+    {
+      "id": "step2.workspace-mcp-cannot-reach-git-admin",
+      "status": "pass",
+      "description": "workspace-mcp cannot reach git-mcp's admin port (8806)",
+      "detail": "unreachable: [Errno -3] Temporary failure in name resolution"
+    },
+    {
+      "id": "step2.chat-mcp-cannot-reach-git-llm",
+      "status": "pass",
+      "description": "chat-mcp cannot reach git-mcp's llm port (8805)",
+      "detail": "unreachable: [Errno -2] Name or service not known"
+    },
+    {
+      "id": "step2.chat-mcp-cannot-reach-git-admin",
+      "status": "pass",
+      "description": "chat-mcp cannot reach git-mcp's admin port (8806)",
+      "detail": "unreachable: [Errno -2] Name or service not known"
+    },
+    {
+      "id": "step2.memory-mcp-cannot-reach-git-llm",
+      "status": "pass",
+      "description": "memory-mcp cannot reach git-mcp's llm port (8805)",
+      "detail": "OCI runtime exec failed: exec failed: unable to start container process: exec: \"python3\": executable file not found in $PATH"
+    },
+    {
+      "id": "step2.memory-mcp-cannot-reach-git-admin",
+      "status": "pass",
+      "description": "memory-mcp cannot reach git-mcp's admin port (8806)",
+      "detail": "OCI runtime exec failed: exec failed: unable to start container process: exec: \"python3\": executable file not found in $PATH"
+    },
+    {
+      "id": "token.found",
+      "status": "pass",
+      "description": "found chat-mcp token in logs",
+      "detail": ""
+    },
+    {
+      "id": "step3.shared-volume",
+      "status": "pass",
+      "description": "a file written by git-mcp into /repo is visible from workspace's /repo",
+      "detail": ""
+    },
+    {
+      "id": "step4.git-status-tool",
+      "status": "pass",
+      "description": "git-mcp status tool reflects its configured state",
+      "detail": "{\"text\": \"{\\n  \\\"stdout\\\": \\\"## main...origin/main [ahead 3]\\\\n?? bulkhead-volume-check-1789849998\\\\n\\\",\\n  \\\"stderr\\\": \\\"\\\",\\n  \\\"exit_code\\\": 0\\n}\"}"
+    },
+    {
+      "id": "step5.admin-tools-excluded",
+      "status": "pass",
+      "description": "orchestrator's mcp_agent.config.yaml registers git-mcp's LLM port but never its admin port/tools",
+      "detail": ""
+    },
+    {
+      "id": "step6.mcp-allowlist",
+      "status": "pass",
+      "description": "all registered MCP servers' tool surfaces match the allowlist",
+      "detail": "[PASS] workspace-mcp exposes exactly ['exec'] | [PASS] memory-mcp exposes exactly ['add_observations', 'create_entities', 'create_relations', 'delete_entities', 'delete_observations', 'delete_relations', 'open_nodes', 'read_graph', 'search_nodes'] | [PASS] git-mcp exposes exactly ['branch_list', 'checkout', 'commit', 'create_branch', 'diff', 'log', 'push_request', 'status'] | [PASS] git-mcp-admin exposes exactly ['pending_push', 'push_cancel', 'push_execute']"
+    },
+    {
+      "id": "step7.local-git-ops-through-chat",
+      "status": "pass",
+      "description": "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log",
+      "detail": "bc4d3bd validate-phase3: bulkhead-git-check-1789850003 | 68264cd validate-phase3: bulkhead-git-check-1789849663 | 47d9725 validate-phase3: bulkhead-git-check-1789842990 | 260179d validate-phase3: bulkhead-git-check-1789842490 | f9b9f13 Add ssh-daemon into git-mcp - supports passphrase and VM's | d97572a Add nix down | edb293d Fix ssh key failure git - wrong permissions | 69cac25 Add Git MCP (phase 3) and rename project to Bulkhead | 191f6fc Rename to Axle | bcb9a10 Phase 2 checking - still failing | 38fece0 Make memory tool usage explicit, fix step 3/7 test timing bugs | 4cc4a3a Add idempotent Kata + Docker host bootstrap script | c642051 Fix Kata setup instructions - wrong daemon.json syntax, no Nix path | 96e9cdd Fix workspace-mcp blocking its event loop on exec | e45fadc Make the chat CLI a real persistent, live REPL by default | a2de16f Fix stale workspace-mcp Dockerfile comment re: socket ownership | 24a57ce Add phase 2 validation runbook and automated harness | 5bc044d Investigate MCP gateway option, ship allowlist-checker prototype | cfd4490 Add Memory MCP server (fifth container) | 90659bf Add Kata Containers runtime option for Workspace"
+    },
+    {
+      "id": "step8.push-request-branch-rejected",
+      "status": "pass",
+      "description": "push_request against a disallowed branch is rejected",
+      "detail": "{\"text\": \"{\\n  \\\"pending\\\": []\\n}\"}"
+    },
+    {
+      "id": "step9.push-not-immediate",
+      "status": "pass",
+      "description": "push_request stages without pushing",
+      "detail": "refs/heads/agent/bulkhead-validate-deny-1789850017 absent on the remote immediately after push_request"
+    },
+    {
+      "id": "step9.deny-cancels-and-blocks-reapproval",
+      "status": "pass",
+      "description": "deny cancels a pending push and blocks re-approval",
+      "detail": "remote still absent after deny, and approving the same id afterward was rejected: Push failed (exit -1): | no pending push request 'aaf79e7a076e1e2c' (unknown, expired, or already executed)"
+    },
+    {
+      "id": "step9.approve-pushes-to-remote",
+      "status": "pass",
+      "description": "approve actually pushes to the remote",
+      "detail": "bc4d3bd5ca397c5c47090ae811d179e34b766069"
+    }
+  ],
+  "summary": {
+    "pass": 17,
+    "fail": 0,
+    "skip": 0,
+    "total": 17
+  }
+}
