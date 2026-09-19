@@ -41,7 +41,15 @@
             if [ "''${1:-}" = "--no-cache" ]; then
               no_cache="--no-cache"
             fi
-            exec ${pkgs.docker}/bin/docker build $no_cache -t ${tag} ${dir}
+            # --provenance=false --sbom=false: BuildKit otherwise wraps the
+            # image in a manifest list with an attestation manifest even for
+            # a single-platform local build. On some Docker Engine/containerd
+            # image-store combinations, `docker run`/`docker exec` against
+            # that tag resolves the wrong manifest in the list, producing a
+            # container whose filesystem is missing layers (e.g. apt-installed
+            # binaries silently absent at runtime despite a successful build
+            # log). Plain single-manifest images side-step this entirely.
+            exec ${pkgs.docker}/bin/docker build --provenance=false --sbom=false $no_cache -t ${tag} ${dir}
           '');
         };
       in
@@ -78,9 +86,10 @@
               rm -f "$result_link"
 
               echo "== Building workspace-mcp, chat-mcp, orchestrator images via Docker ==" >&2
-              ${pkgs.docker}/bin/docker build $no_cache -t pandora-workspace-mcp:dev workspace-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t pandora-chat-mcp:dev chat-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t pandora-orchestrator:dev orchestrator
+              # --provenance=false --sbom=false: see comment in dockerBuildApp above.
+              ${pkgs.docker}/bin/docker build --provenance=false --sbom=false $no_cache -t pandora-workspace-mcp:dev workspace-mcp
+              ${pkgs.docker}/bin/docker build --provenance=false --sbom=false $no_cache -t pandora-chat-mcp:dev chat-mcp
+              ${pkgs.docker}/bin/docker build --provenance=false --sbom=false $no_cache -t pandora-orchestrator:dev orchestrator
 
               echo "== Starting docker compose ==" >&2
               exec ${pkgs.docker-compose}/bin/docker-compose up
