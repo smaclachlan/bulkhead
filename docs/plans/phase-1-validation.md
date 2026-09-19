@@ -14,6 +14,20 @@ pass/fail shown once in a terminal. Prefer it over the manual walkthrough
 below for repeat runs; see `validation-results/README.md` for the record
 schema and how to extend this for a later phase.
 
+The harness also runs a **step 7**, beyond this manual runbook's original
+scope: direct MCP-protocol checks against `workspace-mcp`'s `/mcp` endpoint,
+bypassing the chat/LLM path entirely - confirms it's unreachable from the
+host, that it exposes exactly one tool (`exec`) with a schema that only
+takes `command` (no hidden target-selection field), that a raw exec call
+actually runs inside the Workspace container, that `docker ps` fails inside
+it (no docker CLI there), and - honestly, not assuming the ADR's intent
+holds - whether `chat-mcp` can reach `workspace-mcp` over their shared
+`internal` network even though [ADR-0001 §1](../adr/0001-phase-1-four-container-architecture.md)
+says it should be reachable from the Orchestrator only. `internal: true`
+blocks egress to the outside world, but doesn't isolate members of the same
+network from each other - if this check fails, that's real information
+about a phase-1 gap, not something to explain away.
+
 **Status: core path run for real** (steps 1, 3 and 4 below, plus two of
 step 5's three containment checks), on the developer's machine with Nix +
 Docker + a real `ANTHROPIC_API_KEY` - this first pass was manual, before the
