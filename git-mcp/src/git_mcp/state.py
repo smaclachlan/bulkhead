@@ -84,6 +84,9 @@ class GitState:
         self.push_ttl_seconds = int(os.environ.get("GIT_PUSH_REQUEST_TTL_SECONDS", "900"))
         self._pending: dict[str, PendingPush] = {}
         self._lock = asyncio.Lock()
+        # Separate from _lock (which only ever guards _pending) - see
+        # _run_git's retry-clone-on-first-real-call below.
+        self._init_lock = asyncio.Lock()
 
     # -- process plumbing -------------------------------------------------
 
@@ -138,6 +141,18 @@ class GitState:
                 "(see README's Git MCP setup section)",
                 exit_code=-1,
             )
+        # The boot-time clone in ensure_repo_initialized can fail purely
+        # because a passphrase-protected deploy key's agent was still empty
+        # at that point (see git-mcp-unlock/state.py's _start_agent) -
+        # unlocking it afterward doesn't itself retry the clone, since
+        # nothing was watching for that. So retry lazily here instead: any
+        # real git call is a fine trigger, and this is a no-op the moment
+        # the repo already exists. Locked so concurrent calls that all see
+        # a missing repo don't all try to clone into it at once.
+        if not os.path.isdir(os.path.join(self.repo_path, ".git")):
+            async with self._init_lock:
+                if not os.path.isdir(os.path.join(self.repo_path, ".git")):
+                    await self.ensure_repo_initialized()
         argv = ["git", "-C", self.repo_path, *args]
         result = await asyncio.to_thread(
             subprocess.run,
