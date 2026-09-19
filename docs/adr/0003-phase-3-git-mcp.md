@@ -71,16 +71,33 @@ as a normal MCP server (`server_names=[..., "git"]` on the Orchestrator's
 `Agent`, alongside `workspace`/`memory` - mcp-agent namespaces these as
 `git_status`, `git_diff`, etc.):
 
-- `status()`, `diff(path: str | None)`, `log(limit: int = 20)`,
-  `branch_list()` - read-only.
+- `status()`, `diff(path: str | None, rev_range: str | None = None)`,
+  `log(limit: int = 20, path: str | None = None, stat: bool = False)`,
+  `branch_list(contains: str | None = None)`,
+  `show(rev: str, path: str | None)`, `remote()`, `rev_parse(rev: str)`,
+  `merge_base(rev_a: str, rev_b: str)`, `tag_list()` - read-only.
 - `commit(message: str)`, `create_branch(name: str)`, `checkout(name: str)` -
-  local writes.
+  local writes (`checkout` also picks up a not-yet-local remote-tracking
+  branch via git's own DWIM, once `fetch` below has brought it down).
 
-All seven match README's explicit carve-out ("isn't gated - the Workspace
-Sandbox is already fully network isolated") - the same reasoning applies
-unchanged: `git-mcp` itself has no inbound path from anywhere except the
-Orchestrator, so these tools crossing *into* `git-mcp` isn't a new egress
-path, only `push` is.
+All of these except `fetch` match README's explicit carve-out ("isn't gated
+- the Workspace Sandbox is already fully network isolated") - the same
+reasoning applies unchanged: `git-mcp` itself has no inbound path from
+anywhere except the Orchestrator, so these tools crossing *into* `git-mcp`
+isn't a new egress path.
+
+**`fetch()` - added later, the one deliberate exception.** Unlike everything
+else above, `fetch` does cross the network boundary: it updates
+remote-tracking refs (e.g. `origin/main`) from the pre-configured remote,
+the same one `push_request`/`push_execute` already reach. Given directly to
+the LLM, not gated like push, because it's read-only against the remote
+(nothing is sent, only received), it can only ever target the one
+already-configured remote (no arbitrary URL, no adding a new remote), and it
+makes no local mutation beyond updating `refs/remotes/*` - the working tree
+and local branches are untouched. The one risk this doesn't cover - a
+compromised or hostile remote serving malicious ref content back - is a risk
+`push_execute` already accepts implicitly by trusting the pre-configured
+remote at all; `fetch` doesn't introduce a new one.
 
 ### 3. The one gated action - `push_request` / `push_execute` split
 
@@ -139,8 +156,11 @@ Chat MCP already uses for its MCP port + web UI port - see
 `chat-mcp/src/chat_mcp/server.py`'s `asyncio.gather`), both closing over one
 shared in-process `GitState` (the pending-request store and repo config):
 - port 8805 - the LLM-facing server (`status`/`diff`/`log`/`branch_list`/
-  `commit`/`create_branch`/`checkout`/`push_request`), registered in
-  `mcp_agent.config.yaml` and attached via `server_names`.
+  `commit`/`create_branch`/`checkout`/`push_request`/`show`/`remote`/
+  `rev_parse`/`merge_base`/`tag_list`/`fetch`), registered in
+  `mcp_agent.config.yaml` and attached via `server_names`. All but `fetch`
+  and `push_request` are local-only; see the `fetch` follow-up note below
+  for why that one's network reach is still within this ADR's boundary.
 - port 8806 - the harness-only admin server (`pending_push`/`push_execute`/
   `push_cancel`), **never** registered in `mcp_agent.config.yaml` or
   `server_names` - reached only by a new hand-rolled `GitAdminClient` in the

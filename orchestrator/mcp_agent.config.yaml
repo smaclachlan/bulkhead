@@ -41,9 +41,11 @@ mcp:
     memory:
       transport: streamable_http
       url: "http://memory-mcp:8803/mcp"
-    # Server key "git" + its eight tools become "git_status", "git_diff",
-    # "git_push_request", etc. See ADR-0003 Decision 2/3 for the tool list
-    # and why push_request only stages a request rather than pushing.
+    # Server key "git" + its fourteen tools become "git_status", "git_diff",
+    # "git_push_request", "git_fetch", etc. See ADR-0003 Decision 2/3 for the
+    # tool list and why push_request only stages a request rather than
+    # pushing, and its own follow-up note on why git_fetch is safe as the
+    # one other tool here (besides push_request) that reaches the network.
     git:
       transport: streamable_http
       url: "http://git-mcp:8805/mcp"

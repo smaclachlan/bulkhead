@@ -61,11 +61,15 @@ ALLOWLIST = {
     },
     # git-mcp LLM-facing port (docs/adr/0003-phase-3-git-mcp.md Decision 2)
     # - push_request only stages a request, it must never be push_execute.
+    # fetch is the one other tool here that reaches the network - read
+    # direction only, against the one pre-configured remote (see that ADR
+    # git_fetch follow-up note and the fetch tool docstring in server.py).
     "git-mcp": {
         "url": "http://git-mcp:8805/mcp",
         "tools": sorted([
             "status", "diff", "log", "branch_list",
             "commit", "create_branch", "checkout", "push_request",
+            "show", "remote", "rev_parse", "merge_base", "tag_list", "fetch",
         ]),
     },
     # git-mcp admin port - reachable from orchestrator over the network

@@ -129,10 +129,13 @@ GitHub/GitLab "deploy key", not a personal SSH key) - it's bind-mounted
 read-only into `git-mcp` alone and never reaches any other container.
 
 Once the stack is up, the agent has `git_status`/`git_diff`/`git_log`/
-`git_branch_list`/`git_commit`/`git_create_branch`/`git_checkout` available
-immediately (all local, all ungated) plus `git_push_request(branch)`, which
-only *stages* a push - it never pushes on its own. A pending push shows up
-in chat as e.g.:
+`git_branch_list`/`git_commit`/`git_create_branch`/`git_checkout`/
+`git_show`/`git_remote`/`git_rev_parse`/`git_merge_base`/`git_tag_list`
+available immediately (all local, all ungated) and `git_fetch` too (the one
+other tool here that reaches the network - read-direction only, against the
+one pre-configured remote, never pushes), plus `git_push_request(branch)`,
+which only *stages* a push - it never pushes on its own. A pending push
+shows up in chat as e.g.:
 
 ```
 Pending push approval:

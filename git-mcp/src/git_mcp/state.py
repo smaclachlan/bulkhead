@@ -223,17 +223,52 @@ class GitState:
     async def status(self) -> PushResult:
         return await self._run_git("status", "--short", "--branch")
 
-    async def diff(self, path: "str | None") -> PushResult:
+    async def diff(self, path: "str | None", rev_range: "str | None" = None) -> PushResult:
         args = ["diff"]
+        if rev_range:
+            args.append(rev_range)
         if path:
             args += ["--", path]
         return await self._run_git(*args)
 
-    async def log(self, limit: int) -> PushResult:
-        return await self._run_git("log", f"-n{max(1, limit)}", "--oneline")
+    async def log(self, limit: int, path: "str | None" = None, stat: bool = False) -> PushResult:
+        args = ["log", f"-n{max(1, limit)}", "--oneline"]
+        if stat:
+            args.append("--stat")
+        if path:
+            args += ["--", path]
+        return await self._run_git(*args)
 
-    async def branch_list(self) -> PushResult:
-        return await self._run_git("branch", "-a")
+    async def branch_list(self, contains: "str | None" = None) -> PushResult:
+        args = ["branch", "-a"]
+        if contains:
+            args += ["--contains", contains]
+        return await self._run_git(*args)
+
+    async def show(self, rev: str, path: "str | None") -> PushResult:
+        args = ["show", rev]
+        if path:
+            args += ["--", path]
+        return await self._run_git(*args)
+
+    async def remote(self) -> PushResult:
+        return await self._run_git("remote", "-v")
+
+    async def rev_parse(self, rev: str) -> PushResult:
+        return await self._run_git("rev-parse", rev)
+
+    async def merge_base(self, rev_a: str, rev_b: str) -> PushResult:
+        return await self._run_git("merge-base", rev_a, rev_b)
+
+    async def tag_list(self) -> PushResult:
+        return await self._run_git("tag", "-l", "--sort=-creatordate")
+
+    async def fetch(self) -> PushResult:
+        # Read direction only, and only ever the one pre-configured remote -
+        # see server.py's fetch tool docstring and docs/adr/0003 for why this
+        # is still within the network-egress boundary push_request/
+        # push_execute already opened, not a new one.
+        return await self._run_git("fetch", self.remote_name, timeout=120)
 
     async def commit(self, message: str) -> PushResult:
         add_result = await self._run_git("add", "-A")
