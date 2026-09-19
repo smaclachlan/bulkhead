@@ -37,7 +37,11 @@
               echo "run this from the pandora repo root (flake.nix not found in $PWD)" >&2
               exit 1
             fi
-            exec ${pkgs.docker}/bin/docker build -t ${tag} ${dir}
+            no_cache=""
+            if [ "''${1:-}" = "--no-cache" ]; then
+              no_cache="--no-cache"
+            fi
+            exec ${pkgs.docker}/bin/docker build $no_cache -t ${tag} ${dir}
           '');
         };
       in
@@ -61,6 +65,12 @@
                 exit 1
               fi
 
+              no_cache=""
+              if [ "''${1:-}" = "--no-cache" ]; then
+                no_cache="--no-cache"
+                echo "== --no-cache requested: Docker image layers will not be reused ==" >&2
+              fi
+
               echo "== Building workspace-image via Nix ==" >&2
               result_link="$(mktemp -u)"
               ${pkgs.nix}/bin/nix build .#workspace-image -o "$result_link"
@@ -68,9 +78,9 @@
               rm -f "$result_link"
 
               echo "== Building workspace-mcp, chat-mcp, orchestrator images via Docker ==" >&2
-              ${pkgs.docker}/bin/docker build -t pandora-workspace-mcp:dev workspace-mcp
-              ${pkgs.docker}/bin/docker build -t pandora-chat-mcp:dev chat-mcp
-              ${pkgs.docker}/bin/docker build -t pandora-orchestrator:dev orchestrator
+              ${pkgs.docker}/bin/docker build $no_cache -t pandora-workspace-mcp:dev workspace-mcp
+              ${pkgs.docker}/bin/docker build $no_cache -t pandora-chat-mcp:dev chat-mcp
+              ${pkgs.docker}/bin/docker build $no_cache -t pandora-orchestrator:dev orchestrator
 
               echo "== Starting docker compose ==" >&2
               exec ${pkgs.docker-compose}/bin/docker-compose up
