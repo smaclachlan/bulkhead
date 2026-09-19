@@ -56,6 +56,26 @@
           build-chat-mcp-image = dockerBuildApp "chat-mcp" "chat-mcp" "pandora-chat-mcp:dev";
           build-orchestrator-image = dockerBuildApp "orchestrator" "orchestrator" "pandora-orchestrator:dev";
 
+          # Terminal client for Chat MCP's REST API (docs/adr/0002-phase-2-isolation-ux-memory.md,
+          # phase-2-scope.md item 3) - a third consumer of the same
+          # /api/messages, /api/send surface the browser UI uses, so it
+          # needs no image build of its own, just the devShell's python3.
+          # Usage: nix run .#chat -- send "hi" --wait
+          #        nix run .#chat -- repl
+          # (reads CHAT_MCP_TOKEN/CHAT_UI_URL from the environment; the
+          # token is printed by `docker compose logs chat-mcp`.)
+          chat = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "pandora-chat" ''
+              set -euo pipefail
+              if [ ! -f flake.nix ]; then
+                echo "run this from the pandora repo root (flake.nix not found in $PWD)" >&2
+                exit 1
+              fi
+              exec ${pkgs.python3}/bin/python3 chat-mcp/src/chat_mcp/cli.py "$@"
+            '');
+          };
+
           up = {
             type = "app";
             program = toString (pkgs.writeShellScript "pandora-up" ''

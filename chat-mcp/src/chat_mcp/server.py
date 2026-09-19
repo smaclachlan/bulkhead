@@ -17,10 +17,12 @@ import secrets
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 
-from .state import ChatState
+from .state import ChatState, Status
 from .web import build_web_app
 
-CHAT_STATE = ChatState()
+CHAT_STATE = ChatState(
+    stale_after_seconds=int(os.environ.get("CHAT_STATUS_STALE_SECONDS", "60"))
+)
 
 mcp = MCPServer("chat-mcp", version="0.1.0")
 
@@ -39,8 +41,26 @@ async def chat_receive(timeout_seconds: int = 30) -> dict:
     Returns {"message": null} on timeout - callers should retry rather than
     treat that as an error; there is no other push mechanism in phase 1.
     """
+    # Marked on every call, timeout or not - the Orchestrator's poll loop
+    # calls this back-to-back (see orchestrator/src/orchestrator/main.py),
+    # so this is Chat MCP's only signal that it's still alive. See
+    # docs/adr/0002-phase-2-isolation-ux-memory.md Decision 2.
+    CHAT_STATE.mark_seen()
     message = await CHAT_STATE.next_user_message(timeout_seconds)
     return {"message": message}
+
+
+@mcp.tool(name="chat_set_status")
+def chat_set_status(state: Status) -> dict:
+    """Record the Orchestrator's current activity stage for the chat UI's
+    typing-indicator. Closed enum (received/working/done/error) by design -
+    narrowest-vocabulary rule, README cornerstone 9 - and called by the
+    Orchestrator's own harness loop, never by the LLM (same reasoning as
+    chat_send/chat_receive being off its tool list): see
+    docs/adr/0002-phase-2-isolation-ux-memory.md Decision 2.
+    """
+    CHAT_STATE.set_status(state)
+    return {"ok": True}
 
 
 def _resolve_token() -> str:

@@ -40,11 +40,26 @@ def build_web_app(state: ChatState, token: str) -> Starlette:
         msg = state.add_user_message(text)
         return JSONResponse({"id": msg.id})
 
+    async def get_status(request: Request):
+        # Presence + activity feedback for the UI - see
+        # docs/adr/0002-phase-2-isolation-ux-memory.md Decision 2. No new
+        # containment surface: read-only, same auth gate as everything else
+        # on this app.
+        return JSONResponse(
+            {
+                "last_seen": state.last_seen,
+                "stale_after_seconds": state.stale_after_seconds,
+                "status": state.status,
+                "status_ts": state.status_ts,
+            }
+        )
+
     app = Starlette(
         routes=[
             Route("/", index, methods=["GET"]),
             Route("/api/messages", get_messages, methods=["GET"]),
             Route("/api/send", post_send, methods=["POST"]),
+            Route("/api/status", get_status, methods=["GET"]),
         ],
     )
     app.add_middleware(TokenAuthMiddleware, token=token)

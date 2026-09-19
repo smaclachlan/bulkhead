@@ -51,3 +51,10 @@ class ChatClient:
     async def send(self, message: str) -> None:
         """Relay the LLM's reply to the human via the chat UI."""
         await self._session.call_tool("chat_send", {"message": message})
+
+    async def set_status(self, state: str) -> None:
+        """Report the harness loop's current stage (received/working/done/
+        error) for the chat UI's activity indicator. Harness-level, same as
+        send/receive above - the LLM never calls this itself. See
+        docs/adr/0002-phase-2-isolation-ux-memory.md Decision 2."""
+        await self._session.call_tool("chat_set_status", {"state": state})

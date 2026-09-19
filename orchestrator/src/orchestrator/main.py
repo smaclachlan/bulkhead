@@ -59,11 +59,16 @@ async def run() -> None:
                     continue
 
                 print(f"[orchestrator] received: {message!r}")
+                await chat.set_status("received")
                 try:
+                    await chat.set_status("working")
                     reply = await llm.generate_str(message)
                 except Exception as exc:  # noqa: BLE001 - surface to the human, keep the loop alive
                     print(f"[orchestrator] error handling message: {exc!r}")
                     reply = f"Sorry, something went wrong handling that: {exc}"
+                    await chat.set_status("error")
+                else:
+                    await chat.set_status("done")
 
                 await chat.send(reply)
                 print(f"[orchestrator] replied: {reply!r}")

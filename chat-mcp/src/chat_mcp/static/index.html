@@ -14,10 +14,16 @@
   form { display: flex; gap: 0.5rem; }
   input[type=text] { flex: 1; padding: 0.5rem; }
   #status { color: #a00; font-size: 0.85rem; margin-bottom: 0.5rem; min-height: 1em; }
+  #presence { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; }
+  #presence .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #aaa; display: inline-block; }
+  #presence .dot.connected { background: #2a9d3f; }
+  #presence .dot.stale { background: #cc4b37; }
+  #presence .activity { font-style: italic; }
 </style>
 </head>
 <body>
 <h3>Pandora - Agent Chat</h3>
+<div id="presence"><span class="dot" id="presence-dot"></span><span id="presence-text">connecting...</span><span class="activity" id="activity-text"></span></div>
 <div id="status"></div>
 <div id="log"></div>
 <form id="send-form">
@@ -66,6 +72,34 @@ async function poll() {
   }
 }
 
+const ACTIVITY_LABELS = {
+  received: "agent received your message...",
+  working: "agent is working...",
+  done: "",
+  error: "agent hit an error",
+};
+
+async function pollStatus() {
+  const dot = document.getElementById("presence-dot");
+  const text = document.getElementById("presence-text");
+  const activity = document.getElementById("activity-text");
+  try {
+    const res = await fetch(withToken("/api/status"));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const staleMs = (data.stale_after_seconds || 60) * 1000;
+    const seenMs = data.last_seen ? data.last_seen * 1000 : null;
+    const isStale = seenMs === null || (Date.now() - seenMs) > staleMs;
+    dot.className = "dot " + (isStale ? "stale" : "connected");
+    text.textContent = isStale ? "orchestrator not responding" : "connected";
+    activity.textContent = ACTIVITY_LABELS[data.status] ?? "";
+  } catch (e) {
+    dot.className = "dot stale";
+    text.textContent = "connection lost";
+    activity.textContent = "";
+  }
+}
+
 document.getElementById("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = document.getElementById("text");
@@ -81,7 +115,9 @@ document.getElementById("send-form").addEventListener("submit", async (e) => {
 });
 
 setInterval(poll, 1000);
+setInterval(pollStatus, 3000);
 poll();
+pollStatus();
 </script>
 </body>
 </html>
