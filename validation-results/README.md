@@ -29,6 +29,13 @@ against the ADR's stated intent, not be explained away.
 }
 ```
 
+`scripts/validate-phase2.sh` adds a third check status, `"skip"`, for checks
+that are legitimately conditional on host setup rather than pass/fail (e.g.
+the Kata runtime check, only meaningful when `WORKSPACE_RUNTIME=kata` is
+set - see `docs/plans/phase-2-validation.md`). A skip is recorded in
+`checks`/`summary.skip` but doesn't count toward `pass`/`fail`, and doesn't
+affect the script's exit code.
+
 ## Adding a new phase
 
 Copy the latest `scripts/validate-phaseN.sh` as a starting point, change its
