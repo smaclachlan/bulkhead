@@ -10,6 +10,7 @@ import asyncio
 import fnmatch
 import os
 import secrets
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -56,11 +57,31 @@ class GitState:
         self.deploy_key_path = os.environ.get(
             "GIT_SSH_DEPLOY_KEY_PATH", "/run/secrets/deploy_key"
         )
+        # docker-compose.yml mounts the deploy key read-only, so its
+        # permissions are whatever the host file has - typically too open
+        # (group/other readable) for ssh, which refuses to use such a key at
+        # all ("UNPROTECTED PRIVATE KEY FILE", confirmed live). A read-only
+        # mount can't be chmod'd in place, so copy it to a private,
+        # container-local path with 0600 once at startup and use that copy
+        # for every ssh invocation instead of the raw mount.
+        self._ssh_key_path = self._prepare_ssh_key()
         self.push_ttl_seconds = int(os.environ.get("GIT_PUSH_REQUEST_TTL_SECONDS", "900"))
         self._pending: dict[str, PendingPush] = {}
         self._lock = asyncio.Lock()
 
     # -- process plumbing -------------------------------------------------
+
+    def _prepare_ssh_key(self) -> str:
+        if not os.path.isfile(self.deploy_key_path):
+            # Nothing to copy (e.g. the checked-in unconfigured placeholder,
+            # or GIT_SSH_DEPLOY_KEY_HOST_PATH just isn't set) - fall through
+            # to the original path so ssh fails with a clear "no such
+            # identity file" rather than this silently swallowing it.
+            return self.deploy_key_path
+        private_copy = "/tmp/git-mcp-deploy-key"
+        shutil.copyfile(self.deploy_key_path, private_copy)
+        os.chmod(private_copy, 0o600)
+        return private_copy
 
     def _ssh_env(self) -> dict:
         env = dict(os.environ)
@@ -69,7 +90,7 @@ class GitState:
         # in the container - the deploy key is the only credential this
         # container is meant to authenticate with (ADR-0003 Decision 4).
         env["GIT_SSH_COMMAND"] = (
-            f"ssh -i {self.deploy_key_path} -o IdentitiesOnly=yes "
+            f"ssh -i {self._ssh_key_path} -o IdentitiesOnly=yes "
             "-o StrictHostKeyChecking=accept-new"
         )
         return env
@@ -102,7 +123,17 @@ class GitState:
     async def ensure_repo_initialized(self) -> None:
         """Clone GIT_REMOTE_URL into the shared volume on first start; skip if
         a prior session's volume already has a checkout. See ADR-0003
-        Decision 1 - this is the "syncing" README point 8 names."""
+        Decision 1 - this is the "syncing" README point 8 names.
+
+        Deliberately never raises: a bad deploy key, wrong URL, or network
+        hiccup here used to crash this whole process before it ever started
+        serving either MCP port - which meant the Orchestrator's
+        GitAdminClient couldn't even connect and its own startup fell over
+        with it (confirmed live: a git-mcp clone failure crash-looped the
+        Orchestrator too). Logging and continuing means both MCP servers
+        still come up; every git-mcp tool then just returns git's own
+        "not a git repository" error until the real problem (e.g. deploy key
+        permissions/access) is fixed and git-mcp is restarted to retry."""
         if not self.configured:
             print("[git-mcp] GIT_REMOTE_URL not set - starting unconfigured, "
                   "tools will report this until it's set (see README's Git MCP setup)")
@@ -124,7 +155,10 @@ class GitState:
             env=self._ssh_env(),
         )
         if result.returncode != 0:
-            raise RuntimeError(f"initial clone failed: {result.stderr}")
+            print(f"[git-mcp] initial clone failed, continuing unconfigured "
+                  f"(git tools will error until this is fixed and git-mcp is "
+                  f"restarted): {result.stderr}")
+            return
 
         # No arbitrary hooks running inside this container on checkout/push -
         # ADR-0003 Decision 4 ("no hooks"). Point hooksPath somewhere that
