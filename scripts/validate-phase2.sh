@@ -158,9 +158,17 @@ if [ -z "${token:-}" ]; then
   record step3.presence-advances fail "skipped - no chat-mcp token"
   record step3.activity-sequence fail "skipped - no chat-mcp token"
 else
+  # last_seen only updates once per chat_receive call, which blocks for up
+  # to CHAT_POLL_TIMEOUT_SECONDS (default 30s) at a time - a gap shorter
+  # than that will almost always land inside the same call's window and
+  # look like it "didn't advance" even though presence is working fine.
+  poll_timeout="$(docker compose exec -T orchestrator printenv CHAT_POLL_TIMEOUT_SECONDS 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$poll_timeout" ] || poll_timeout=30
+  wait_seconds=$((poll_timeout + 10))
+
   status1="$(curl -s "http://localhost:8787/api/status?token=${token}")"
   seen1="$(printf '%s' "$status1" | python3 -c "import json,sys; print(json.load(sys.stdin).get('last_seen'))" 2>/dev/null)"
-  sleep 5
+  sleep "$wait_seconds"
   status2="$(curl -s "http://localhost:8787/api/status?token=${token}")"
   seen2="$(printf '%s' "$status2" | python3 -c "import json,sys; print(json.load(sys.stdin).get('last_seen'))" 2>/dev/null)"
 
@@ -191,10 +199,16 @@ else
       sleep 1
     done
 
-    if printf '%s' "$seq" | grep -qE 'received.*working.*(done|error)'; then
-      record step3.activity-sequence pass "status passed through received -> working -> done/error in order" "$seq"
+    # "received" is set and then immediately overwritten by "working" in
+    # main.py, with no real work happening in between - it exists for at
+    # most a few tens of milliseconds, so a 1s-granularity poll (same rate
+    # the browser UI itself uses) catching it is best-effort, not
+    # guaranteed. Only "working" before "done"/"error" is an actual
+    # guarantee worth failing the build over.
+    if printf '%s' "$seq" | grep -qE 'working.*(done|error)'; then
+      record step3.activity-sequence pass "status passed through working -> done/error in order" "$seq"
     else
-      record step3.activity-sequence fail "status passed through received -> working -> done/error in order" "observed: $seq"
+      record step3.activity-sequence fail "status passed through working -> done/error in order" "observed: $seq"
     fi
   fi
 fi
@@ -355,6 +369,15 @@ if [ -z "${token:-}" ]; then
 else
   session_marker="pandora-session-marker-$(date +%s)"
   remember_prompt="Please remember this for later, using your memory tools: my validation marker for today is ${session_marker}. Just confirm you've stored it, briefly."
+
+  # A reply containing the marker isn't proof anything was actually
+  # persisted - the model could just echo it back conversationally
+  # without calling a memory_* tool at all. Count mcp-agent's own
+  # "Requesting tool call" log lines for server_name "memory" before/after
+  # to confirm a real tool call happened, not just a plausible-looking
+  # reply.
+  mem_calls_before="$(docker compose logs orchestrator 2>/dev/null | grep -c '"server_name": "memory"')"
+
   curl -s -o /dev/null -X POST "http://localhost:8787/api/send?token=${token}" \
     -H 'Content-Type: application/json' -d "{\"text\":\"${remember_prompt}\"}" >/dev/null
 
@@ -372,8 +395,13 @@ sys.exit(0 if any(m.get('role') != 'user' and '${session_marker}' in (m.get('tex
     fi
   done
 
+  mem_calls_after="$(docker compose logs orchestrator 2>/dev/null | grep -c '"server_name": "memory"')"
+
   if [ "$ack_seen" -ne 1 ]; then
     record step7.cross-session-recall fail "orchestrator acknowledged storing the marker" "no ack seen within 60s"
+  elif [ "$mem_calls_after" -le "$mem_calls_before" ]; then
+    record step7.cross-session-recall fail "orchestrator actually called a memory_* tool to store the marker" \
+      "replied with the marker but no new memory tool call seen in logs ($mem_calls_before -> $mem_calls_after) - it may have just echoed it conversationally"
   else
     since_before_restart="$(curl -s "http://localhost:8787/api/messages?since=0&token=${token}" | python3 -c "
 import json, sys
