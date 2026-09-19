@@ -264,14 +264,29 @@ fi
 mcp_client_py='
 import asyncio, json, sys
 
+def _flatten(exc):
+    # ExceptionGroup (anyio TaskGroups use these internally) stringifies as
+    # a useless "unhandled errors in a TaskGroup (N sub-exception)" unless
+    # you walk .exceptions yourself - unwrap recursively so failures here
+    # are actually diagnosable instead of hiding the real cause.
+    if hasattr(exc, "exceptions"):
+        parts = []
+        for sub in exc.exceptions:
+            parts.extend(_flatten(sub))
+        return parts
+    return [f"{type(exc).__name__}: {exc}"]
+
 async def main():
     out = {}
     try:
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamable_http_client
+        # Matches orchestrator/src/orchestrator/chat_client.py (confirmed
+        # working against a live server in Milestone 4) - no underscore
+        # between "streamable" and "http".
+        from mcp.client.streamable_http import streamablehttp_client
 
         url, mode, marker = sys.argv[1], sys.argv[2], sys.argv[3]
-        async with streamable_http_client(url) as (read, write):
+        async with streamablehttp_client(url) as (read, write, _get_session_id):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()
@@ -296,7 +311,7 @@ async def main():
                     out["exec_text"] = text
                     out["is_error"] = bool(getattr(result, "isError", False))
     except Exception as e:
-        out["error"] = f"{type(e).__name__}: {e}"
+        out["error"] = " | ".join(_flatten(e))
 
     print(json.dumps(out))
 
