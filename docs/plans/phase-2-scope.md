@@ -12,54 +12,21 @@ surfaced**, and **add the capabilities below**. Nothing here reopens phase
 1's container boundaries by accident - each item states which boundary it
 touches.
 
-## Carried over from phase 1 validation - fixed, needs a live re-run
-
-The validation harness found three failures that the runbook explicitly
-flagged as "real information about a phase-1 gap, not something to explain
-away." Addressed as a precondition for phase 2 rather than folded into it -
-new surface area (Memory MCP, a gateway layer, Kata) shouldn't land on top
-of an unconfirmed isolation boundary. Root-caused and fixed in this pass;
-**not yet re-verified live** (this environment has neither Nix nor Docker -
-see `scripts/validate-phase1.sh` prerequisites). Re-run
-`nix run .#up` then `sh scripts/validate-phase1.sh` before treating these as
-closed.
-
-1. **`step7.cross-container-isolation` (FAIL, fixed)** - `chat-mcp` could
-   open a TCP connection to `workspace-mcp:8801` over the shared `internal`
-   Compose network. `internal: true` blocks egress to the outside world but
-   doesn't isolate members of the same network from each other. Per
-   ADR-0001 §1, Workspace MCP should be reachable from the Orchestrator
-   only. **Fix applied**: `docker-compose.yml` now splits the one shared
-   `internal` network into `internal-workspace` (workspace-mcp +
-   orchestrator only) and `internal-chat` (chat-mcp + orchestrator only) -
-   chat-mcp and workspace-mcp no longer share a network at all, so the
-   validation script's TCP probe should now fail at hostname resolution,
-   not just connection refusal.
-2. **`step7.tool-listing` (FAIL, fixed) and `step7.no-docker-in-workspace`
-   (FAIL, fixed) - same root cause.** Both checks run through the same
-   embedded Python MCP client in `validate-phase1.sh` (`run_mcp_check`,
-   used for both the `exec` and `escape` modes) - so the empty `output: ""`
-   recorded against `no-docker-in-workspace` and the `ExceptionGroup` from
-   `tool-listing` are two symptoms of one broken script, not two separate
-   bugs. Confirmed by diff against `orchestrator/src/orchestrator/
-   chat_client.py`, which does the equivalent connection for real (verified
-   live in Milestone 4): the validation script's inline client had
-   `from mcp.client.streamable_http import streamable_http_client` (extra
-   underscore - wrong name) and unpacked its `async with` into a 2-tuple
-   `(read, write)`, where the working client unpacks a 3-tuple `(read,
-   write, get_session_id)`. **Fix applied**: corrected the import name and
-   unpacking to match `chat_client.py` exactly, and replaced the bare
-   `except Exception as e: out["error"] = f"{type(e).__name__}: {e}"` with
-   a recursive unwrap of `ExceptionGroup.exceptions` - anyio's TaskGroups
-   collapse real errors into an opaque "unhandled errors in a TaskGroup (N
-   sub-exception)" string unless you walk the group yourself, which is why
-   the original failure was undiagnosable from its own recorded detail.
-   Future validation-script bugs should now surface their real exception
-   text instead of that generic message.
-   `workspace/default.nix` was independently re-checked: `contents = [
-   coreutils bashInteractive ]`, no docker package - so once the client
-   bug is fixed, the underlying `docker ps` (expected to fail inside
-   `pandora-workspace`) should behave as the check always intended.
+All three failures phase 1's validation harness originally found
+(`step7.cross-container-isolation`, `step7.tool-listing`,
+`step7.no-docker-in-workspace`) are fixed and confirmed by a clean live run:
+`validation-results/phase-1/2026-09-19T12-36-12Z.json`, **19/19 passing**
+(two more checks, `step7.schema-narrow` and `step7.direct-exec`, had been
+gated behind the failing `tool-listing` check and never ran until it
+passed). Root causes: a real network-isolation gap (`docker-compose.yml`
+now splits `internal-workspace`/`internal-chat` so chat-mcp and
+workspace-mcp share no network) and two version mismatches in
+`scripts/validate-phase1.sh`'s embedded MCP test client against
+workspace-mcp/chat-mcp's `mcp>=2.2,<3` pin (the client function is
+`streamable_http_client`, not `streamablehttp_client`; `Tool`/
+`CallToolResult` fields are snake_case, not the `inputSchema`/`isError`
+camelCase from the older API shape `orchestrator`'s separate `mcp<2` pin
+uses). Phase 1 is fully closed - see git history for fix detail.
 
 ## 1. MicroVM isolation via Kata Containers
 
