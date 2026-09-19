@@ -61,10 +61,13 @@
           # phase-2-scope.md item 3) - a third consumer of the same
           # /api/messages, /api/send surface the browser UI uses, so it
           # needs no image build of its own, just the devShell's python3.
-          # Usage: nix run .#chat -- send "hi" --wait
-          #        nix run .#chat -- repl
-          # (reads CHAT_MCP_TOKEN/CHAT_UI_URL from the environment; the
-          # token is printed by `docker compose logs chat-mcp`.)
+          # Usage: nix run .#chat                  # drops straight into a
+          #                                         # persistent live chat
+          #        nix run .#chat -- send "hi" --wait
+          # (reads CHAT_MCP_TOKEN/CHAT_UI_URL from the environment if set;
+          # otherwise pulls the token straight out of
+          # `docker compose logs chat-mcp` itself, so this works with no
+          # setup beyond the stack being up.)
           chat = {
             type = "app";
             program = toString (pkgs.writeShellScript "pandora-chat" ''
