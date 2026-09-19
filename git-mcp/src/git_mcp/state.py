@@ -43,6 +43,9 @@ class GitError(Exception):
     """A push_request that fails validation before anything is staged."""
 
 
+AGENT_SOCK_PATH = "/tmp/git-mcp-agent.sock"
+
+
 class GitState:
     def __init__(self) -> None:
         self.repo_path = os.environ.get("GIT_REPO_PATH", "/repo")
@@ -65,6 +68,19 @@ class GitState:
         # container-local path with 0600 once at startup and use that copy
         # for every ssh invocation instead of the raw mount.
         self._ssh_key_path = self._prepare_ssh_key()
+        # A passphrase-protected deploy key can't be unlocked here - there's
+        # no TTY and no host-forwarded agent that survives a Kata/Apple-
+        # containerization migration (cross-kernel AF_UNIX forwarding doesn't
+        # work; see docs/adr/0003 follow-ups on a future git-mcp Kata move).
+        # So this container runs its own agent instead: empty at boot (a
+        # passphrase-less key still works via the -i fallback in
+        # _ssh_env below, unchanged), and an operator can load the real
+        # passphrase into it later via `nix run .#git-unlock`, which execs
+        # the git-mcp-unlock script over `docker compose exec` (its own pty,
+        # independent of this process). Never persisted to disk - a restart
+        # drops it, same as this file's existing pending-push-on-restart
+        # tradeoff.
+        self._start_agent()
         self.push_ttl_seconds = int(os.environ.get("GIT_PUSH_REQUEST_TTL_SECONDS", "900"))
         self._pending: dict[str, PendingPush] = {}
         self._lock = asyncio.Lock()
@@ -83,12 +99,31 @@ class GitState:
         os.chmod(private_copy, 0o600)
         return private_copy
 
+    def _start_agent(self) -> None:
+        # -D (foreground) instead of ssh-agent's default double-fork-and-
+        # detach: that would re-parent the real daemon onto this process (pid
+        # 1 in the container), which then has to reap it or leak zombies.
+        # Popen without waiting keeps one supervised child instead. If the
+        # socket path is already in use (e.g. a prior instance in tests),
+        # ssh-agent just exits and _ssh_env's SSH_AUTH_SOCK simply won't
+        # resolve to anything - same degrade-to-key-file behavior as no
+        # agent at all.
+        self._agent_proc = subprocess.Popen(
+            ["ssh-agent", "-D", "-a", AGENT_SOCK_PATH],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
     def _ssh_env(self) -> dict:
         env = dict(os.environ)
-        # IdentitiesOnly=yes: only try this one key, never fall back to an
-        # ssh-agent key or another identity that might happen to be present
-        # in the container - the deploy key is the only credential this
-        # container is meant to authenticate with (ADR-0003 Decision 4).
+        env["SSH_AUTH_SOCK"] = AGENT_SOCK_PATH
+        # IdentitiesOnly=yes: only ever try the one identity named by -i,
+        # whether it's served from the agent above or read from disk - never
+        # some other identity that might happen to be present. This
+        # container's agent is started by _start_agent and only ever loaded
+        # with this one deploy key via git-mcp-unlock, so this still holds
+        # the guarantee ADR-0003 Decision 4 wants: no credential but the one
+        # scoped deploy key can ever authenticate from this container.
         env["GIT_SSH_COMMAND"] = (
             f"ssh -i {self._ssh_key_path} -o IdentitiesOnly=yes "
             "-o StrictHostKeyChecking=accept-new"

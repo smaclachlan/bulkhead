@@ -8,10 +8,14 @@
 # reasoning as workspace-mcp/chat-mcp/orchestrator).
 FROM python:3.12-slim
 
-# git for all local/remote operations; openssh-client so `ssh` (used via
-# GIT_SSH_COMMAND for the deploy key, see state.py) is present.
+# git for all local/remote operations; openssh-client so `ssh`/`ssh-agent`/
+# `ssh-add` (used via GIT_SSH_COMMAND and by git-mcp-unlock, see state.py)
+# are present; util-linux for `setsid`, which git-mcp-unlock needs to force
+# ssh-add through SSH_ASKPASS instead of prompting on its own tty - normally
+# pulled in already as a Debian-essential package, pinned explicitly here so
+# that isn't left to chance.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git openssh-client \
+    && apt-get install -y --no-install-recommends git openssh-client util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,6 +24,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
+
+# See git-mcp-unlock's own header comment / state.py's _start_agent for why
+# this exists: a passphrase-protected deploy key gets unlocked into this
+# container's in-process ssh-agent via `nix run .#git-unlock`, rather than
+# forwarding a host ssh-agent socket in (which breaks under Kata/Apple-
+# containerization - cross-kernel AF_UNIX sockets don't survive that boundary).
+COPY git-mcp-unlock /usr/local/bin/git-mcp-unlock
+RUN chmod +x /usr/local/bin/git-mcp-unlock
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/src

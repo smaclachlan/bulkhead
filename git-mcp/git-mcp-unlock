@@ -1,0 +1,78 @@
+#!/bin/sh
+# Loads a passphrase-protected deploy key into this container's own
+# ssh-agent (started by GitState._start_agent, see state.py) so
+# _ssh_env's SSH_AUTH_SOCK can use it for every later git/ssh call without
+# asking again. Run via `nix run .#git-unlock`, which execs this over
+# `docker compose exec` - a real pty on its own, independent of however
+# `docker compose up` was started (see docs/adr/0003-phase-3-git-mcp.md
+# follow-ups: this exists because cross-kernel ssh-agent forwarding from the
+# host breaks under Kata/Apple-containerization, so the agent has to live in
+# this container instead, unlocked from inside it).
+#
+# Never persisted: nothing here writes the passphrase or the decrypted key
+# to disk - a git-mcp restart drops it and this has to be run again.
+#
+# Self-skips whenever there's nothing to unlock (unconfigured, already
+# cloned, or the key has no passphrase at all) so `nix run .#up` can call
+# this unconditionally after every start without ever prompting someone who
+# doesn't need it - see flake.nix's `up` app.
+set -eu
+
+SOCK="/tmp/git-mcp-agent.sock"
+KEY="/tmp/git-mcp-deploy-key"
+REPO_PATH="${GIT_REPO_PATH:-/repo}"
+
+if [ -z "${GIT_REMOTE_URL:-}" ]; then
+  echo "git-mcp is unconfigured (GIT_REMOTE_URL unset) - nothing to unlock" >&2
+  exit 0
+fi
+if [ -d "$REPO_PATH/.git" ]; then
+  echo "git-mcp already has a working checkout - no unlock needed" >&2
+  exit 0
+fi
+if [ ! -S "$SOCK" ]; then
+  echo "git-mcp's ssh-agent socket ($SOCK) isn't there - is git-mcp running?" >&2
+  exit 1
+fi
+if [ ! -f "$KEY" ]; then
+  echo "no deploy key mounted (GIT_SSH_DEPLOY_KEY_HOST_PATH unset, or not" \
+       "mounted) - nothing to unlock" >&2
+  exit 1
+fi
+if ssh-keygen -y -P '' -f "$KEY" >/dev/null 2>&1; then
+  # Decrypts with an empty passphrase, i.e. there isn't one - whatever's
+  # wrong with the clone isn't a passphrase, so don't prompt for one; the
+  # real error is in `docker compose logs git-mcp`.
+  echo "deploy key has no passphrase - nothing to unlock (see" \
+       "'docker compose logs git-mcp' for the actual clone failure)" >&2
+  exit 0
+fi
+
+export SSH_AUTH_SOCK="$SOCK"
+
+stty -echo
+printf "Deploy key passphrase: "
+IFS= read -r passphrase
+stty echo
+printf "\n"
+
+if [ -z "$passphrase" ]; then
+  echo "empty passphrase entered, not calling ssh-add" >&2
+  exit 1
+fi
+
+askpass_script="$(mktemp)"
+trap 'rm -f "$askpass_script"' EXIT
+# ssh-add itself invokes this as SSH_ASKPASS to fetch the passphrase; it
+# never touches disk beyond this one 0700 tempfile, cleaned up on exit.
+printf '#!/bin/sh\nprintf %%s "$GIT_MCP_UNLOCK_PASSPHRASE"\n' > "$askpass_script"
+chmod 700 "$askpass_script"
+
+# SSH_ASKPASS_REQUIRE=force + setsid: ssh-add only consults SSH_ASKPASS when
+# it has no controlling terminal of its own, so this detaches it from the
+# one this script is running under and forces the askpass path instead of a
+# direct tty prompt.
+GIT_MCP_UNLOCK_PASSPHRASE="$passphrase" \
+  SSH_ASKPASS="$askpass_script" \
+  SSH_ASKPASS_REQUIRE=force \
+  setsid ssh-add "$KEY" < /dev/null
