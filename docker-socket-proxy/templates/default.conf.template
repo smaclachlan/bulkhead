@@ -1,0 +1,48 @@
+# Filtering reverse proxy in front of the host's real Docker socket -
+# replaces tecnativa/docker-socket-proxy (ADR-0002 Decision 3). See
+# ../README.md and docker-compose.yml's docker-socket-proxy comment for why:
+# that image can only gate whole API categories (CONTAINERS/EXEC/POST) on
+# or off, with no way to restrict *which* container EXEC is allowed
+# against - a fully-compromised workspace-mcp process could exec into any
+# container on the host, not just the one it's meant to target. This
+# config additionally pins the target container by name.
+#
+# ${WORKSPACE_CONTAINER_NAME} is substituted at container start by the
+# base nginx:alpine image's own envsubst-on-templates entrypoint behavior
+# (files under /etc/nginx/templates/*.template -> /etc/nginx/conf.d/*.conf)
+# - no custom entrypoint script needed. docker-compose.yml sets this env
+# var to the same value used for workspace's own container_name, so it
+# can't drift out of sync even across profiles/concurrent stacks (see
+# WORKSPACE_CONTAINER_NAME's other use there).
+server {
+    listen 2375;
+
+    # Only two path shapes are ever allowed through, both scoped to the one
+    # pinned container:
+    #   - POST /containers/<name>/exec  - create an exec instance
+    #   - GET  /containers/<name>/json  - the docker CLI's own container
+    #     lookup before it issues the exec call
+    # The Docker API is versioned as an optional /vX.Y prefix
+    # (/v1.43/containers/... or bare /containers/...) - match both.
+    location ~ ^/(v[0-9]+\.[0-9]+/)?containers/${WORKSPACE_CONTAINER_NAME}/(exec|json)$ {
+        proxy_pass http://unix:/var/run/docker.sock:;
+    }
+
+    # The second half of the exec flow, `POST /exec/<exec-id>/start`, has no
+    # container name in its path at all - only the opaque exec id returned
+    # by the create call above. That's not a gap: exec ids are Docker-
+    # generated, single-use, and unguessable, and only ever handed out in
+    # response to a create call that was already filtered to the one
+    # allowed container above - there is no way to obtain a valid id for
+    # any other container through this proxy in the first place.
+    location ~ ^/(v[0-9]+\.[0-9]+/)?exec/ {
+        proxy_pass http://unix:/var/run/docker.sock:;
+    }
+
+    # Everything else - image pulls, container create/list/delete, volumes,
+    # networks, the raw /containers/json listing, any other container's
+    # exec/json - refused outright.
+    location / {
+        return 403;
+    }
+}

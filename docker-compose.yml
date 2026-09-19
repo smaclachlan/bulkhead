@@ -118,8 +118,13 @@ services:
   # everything else (IMAGES, NETWORKS, VOLUMES, POST-to-create-containers,
   # etc.) is off by default in tecnativa/docker-socket-proxy. This is now
   # the *only* container with the socket bind mount.
+  # Custom nginx-based filtering proxy (docker-socket-proxy/) - replaced
+  # tecnativa/docker-socket-proxy because that image can only gate whole API
+  # categories (CONTAINERS/EXEC/POST) on or off, with no way to restrict
+  # *which* container EXEC is allowed against. See README's "Docker socket
+  # proxy" section for the full reasoning.
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: bulkhead-docker-socket-proxy:dev
     # No container_name override (unlike `workspace`) - nothing references
     # this one by a fixed literal name (workspace-mcp reaches it by service
     # name, `docker-socket-proxy`, over internal-docker-proxy, which Compose
@@ -130,9 +135,11 @@ services:
     # internal-docker-proxy comment above.
     networks: [internal-docker-proxy]
     environment:
-      - CONTAINERS=1
-      - EXEC=1
-      - POST=1
+      # Must always equal workspace's own container_name (both ultimately
+      # come from the same WORKSPACE_CONTAINER_NAME the `up` script
+      # computes) - this is the one value the proxy's nginx config pins
+      # EXEC/json access to.
+      - WORKSPACE_CONTAINER_NAME=${WORKSPACE_CONTAINER_NAME:-bulkhead-workspace}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: on-failure

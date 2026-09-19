@@ -84,6 +84,20 @@ Omitting the path uses `.env` and the project name `bulkhead`, unchanged from be
 
 `nix run .#down`/`nix run .#git-unlock` must be given the *same* profile path used to bring that stack up - they derive the identical project name from it to find the right one; passing the wrong path (or none, meaning `.env`) targets a different stack, not an error.
 
+## Docker socket proxy
+
+`docker-socket-proxy` (`docker-socket-proxy/`) is the only container holding the real Docker socket (`/var/run/docker.sock`, bind-mounted read-only into it alone - ADR-0002 Decision 3). `workspace-mcp` never gets the raw socket; it talks to this proxy instead, over `DOCKER_HOST=tcp://docker-socket-proxy:2375` on the `internal-docker-proxy` network - a network `orchestrator` isn't on, so it can't reach the proxy directly either, only through `workspace-mcp`'s own single `exec` tool.
+
+The point of the split: `workspace-mcp`'s own code being narrow (one tool, one hardcoded target container) protects against the *agent* misusing the interface it's given. It does nothing against `workspace-mcp`'s own process being compromised (an RCE via a framework bug, a dependency CVE, whatever) - at that point the attacker isn't going through the tool's intended interface anymore, they're running arbitrary code as that process, and no amount of "the source code only ever passes this one container name" matters once someone else's code is what's actually running. The proxy exists specifically so that even a fully-compromised `workspace-mcp` is still stuck talking to a separate container's filtered API - reaching further requires an actual container escape, not just cleverer use of the code execution already gained.
+
+**Why it's a custom nginx image, not `tecnativa/docker-socket-proxy`.** That image (used through phase 2) can only gate whole Docker API *categories* on or off (`CONTAINERS`, `EXEC`, `POST`, etc., verified against its own source) - there's no way to restrict *which* container `EXEC` is allowed against. That left a real gap in the guarantee above: a compromised `workspace-mcp` could `docker exec` into `git-mcp`, `chat-mcp`, `memory-mcp`, `orchestrator`, or the proxy itself, not just the one `workspace` container it's meant to be confined to - `EXEC=1` allows exec against *anything*, uniformly.
+
+`docker-socket-proxy/templates/default.conf.template` fixes this with plain nginx path-matching, substituted at container start (`nginx:alpine`'s built-in template-envsubst behavior, no custom entrypoint needed) with the same `WORKSPACE_CONTAINER_NAME` value `workspace`'s own `container_name` uses, so they can't drift apart:
+
+- `POST /containers/<name>/exec` and `GET /containers/<name>/json` are allowed **only** for the one pinned container name.
+- `POST /exec/<exec-id>/start` (the second half of the exec flow) is allowed for any exec id - its path never contains a container name at all, so it can't be filtered the same way. This isn't a gap in practice: exec ids are Docker-generated, single-use, and unguessable, and only ever issued in response to a create call that was already filtered to the one allowed container above. There's no way to obtain a valid id for any other container through this proxy.
+- Everything else - image pulls, container create/list/delete, volumes, networks, listing all containers, any other container's exec/json - gets a flat 403.
+
 ## Kata Containers setup (phase 2, Workspace container)
 
 See [ADR-0002 Decision 1](docs/adr/0002-phase-2-isolation-ux-memory.md#decision) - `docker-compose.yml`'s `workspace` service takes its OCI runtime from `WORKSPACE_RUNTIME` (default `runc`, so an unmodified checkout still works without Kata installed).
