@@ -58,13 +58,14 @@ apps that shell out to `docker build` (their Dockerfiles land in Milestones
 
 **Goal:** the sole privileged container, exposing exactly one tool.
 
-- [ ] MCP server exposing `exec(command: string) -> {stdout, stderr, exit_code}`.
-- [ ] Implementation is hardcoded to `docker exec <pre-configured-workspace-id> sh -c "<command>"` — container ID from config/env, not a caller-supplied parameter.
-- [ ] No other docker subcommands reachable from the tool surface (no `run`, `rm`, `cp`, arbitrary socket access).
-- [ ] Docker socket bind-mounted in; this is the only container in the topology with that mount (grep the Compose file in Milestone 5 to confirm).
-- [ ] No internet egress configured for this container.
+- [x] MCP server exposing `exec(command: string) -> {stdout, stderr, exit_code}` (`workspace-mcp/src/workspace_mcp/server.py`, `mcp` SDK's `MCPServer`/streamable-http transport).
+- [x] Implementation is hardcoded to `docker exec <pre-configured-workspace-id> sh -c "<command>"` — container ID from `WORKSPACE_CONTAINER_ID` env, not a caller-supplied parameter.
+- [x] No other docker subcommands reachable from the tool surface (no `run`, `rm`, `cp`, arbitrary socket access) — verified by reading the one `subprocess.run` call site.
+- [x] Docker socket bind-mounted in at run time (Dockerfile only installs the `docker` CLI; the mount itself is Milestone 5's Compose concern) — this is the only container in the topology with that mount (grep the Compose file in Milestone 5 to confirm).
+- [x] No internet egress configured for this container (network segmentation itself lands in Milestone 5's Compose file).
 
 **Definition of done:** with Milestone 1's Workspace container running, an MCP client (a throwaway test script is fine here) can call `exec("echo hello")` and get back `{stdout: "hello\n", exit_code: 0}`; calling with a shell metacharacter payload still only ever reaches the one pre-configured container, never anything else on the host.
+Verified in this session with a stubbed `docker` binary (argv construction, timeout/error paths, tool registration via `mcp.list_tools()`) — real `docker exec` behavior against a live Workspace container needs confirming on a machine with Docker.
 
 ---
 
