@@ -216,6 +216,12 @@ on a clean checkout, recorded as a timestamped JSON result under
 **Follow-ups tracked for later phases**
 - Kata for Workspace MCP itself, once the socket-proxy (Decision 3) is
   proven and Workspace's own Kata migration has run in real use.
+- Decision 3's proxy only gates whole API categories, not which container
+  EXEC targets - discovered live (README's Further Threats item 7) while
+  attempting a custom nginx-based per-container filter, which was reverted
+  after nginx proved unable to reliably relay Docker's exec/attach hijack
+  protocol. A Docker Authorization Plugin or a purpose-built raw-relay
+  filter would close this properly; neither is scoped yet.
 - Pre-persistence human review for memory writes (mitigates the poisoning
   risk named in Decision 4, doesn't eliminate it here).
 - Retrofitting the MCP gateway (Decision 5) in front of Chat MCP too, if the
