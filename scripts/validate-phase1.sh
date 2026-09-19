@@ -280,20 +280,33 @@ async def main():
     out = {}
     try:
         from mcp import ClientSession
-        # Matches orchestrator/src/orchestrator/chat_client.py (confirmed
-        # working against a live server in Milestone 4) - no underscore
-        # between "streamable" and "http".
-        from mcp.client.streamable_http import streamablehttp_client
+        # NOTE: this runs inside the workspace-mcp/chat-mcp container,
+        # which pins mcp>=2.2,<3 - confirmed live (2026-09-19 run) that
+        # this version exports streamable_http_client (with the
+        # underscore), unlike orchestrator/src/orchestrator/chat_client.py,
+        # which imports streamablehttp_client (no underscore) but runs
+        # under orchestrator own separate mcp<2 pin. The two containers
+        # pin different mcp major versions on purpose (see requirements.txt
+        # comments) so this name is deliberately not copied from that file.
+        from mcp.client.streamable_http import streamable_http_client
 
         url, mode, marker = sys.argv[1], sys.argv[2], sys.argv[3]
-        async with streamablehttp_client(url) as (read, write, _get_session_id):
+        async with streamable_http_client(url) as streams:
+            read, write = streams[0], streams[1]
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()
                 out["tools"] = sorted(t.name for t in tools.tools)
                 exec_tool = next((t for t in tools.tools if t.name == "exec"), None)
                 if exec_tool is not None:
-                    props = (exec_tool.inputSchema or {}).get("properties", {})
+                    # mcp>=2 renamed some Tool/CallToolResult fields to
+                    # snake_case (confirmed live 2026-09-19:
+                    # AttributeError on .inputSchema) - try both spellings
+                    # rather than hardcode one SDK major version shape.
+                    schema = getattr(exec_tool, "inputSchema", None)
+                    if schema is None:
+                        schema = getattr(exec_tool, "input_schema", None)
+                    props = (schema or {}).get("properties", {})
                     out["exec_schema_props"] = sorted(props.keys())
 
                 if mode == "exec":
@@ -309,7 +322,10 @@ async def main():
                 if result is not None:
                     text = "\n".join((getattr(b, "text", "") or "") for b in result.content)
                     out["exec_text"] = text
-                    out["is_error"] = bool(getattr(result, "isError", False))
+                    is_error = getattr(result, "isError", None)
+                    if is_error is None:
+                        is_error = getattr(result, "is_error", False)
+                    out["is_error"] = bool(is_error)
     except Exception as e:
         out["error"] = " | ".join(_flatten(e))
 
