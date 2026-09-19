@@ -21,6 +21,13 @@
 #     chat-mcp and orchestrator, for the `chat_send`/`chat_receive` MCP
 #     path - kept separate from internal-workspace precisely so chat-mcp
 #     has no route to workspace-mcp (or vice versa).
+#   - internal-docker-proxy: an `internal: true` network joined only by
+#     workspace-mcp and docker-socket-proxy (ADR-0002 §3). Deliberately
+#     NOT shared with internal-workspace - orchestrator must not gain a
+#     direct route to the socket proxy's (filtered but still real)
+#     container/exec API, only to workspace-mcp's single hardcoded-target
+#     `exec` tool. Same reasoning as the internal-workspace/internal-chat
+#     split above, applied to the new proxy.
 #   - egress:    normal outbound network, attached only to orchestrator,
 #     for the LLM provider's API/auth endpoints.
 #   - chat-ui:   a second network for chat-mcp only, used solely to publish
@@ -36,6 +43,8 @@ networks:
     internal: true
   internal-chat:
     internal: true
+  internal-docker-proxy:
+    internal: true
   egress: {}
   chat-ui:
     driver_opts:
@@ -48,17 +57,47 @@ services:
     network_mode: "none"
     restart: on-failure
 
+  # Scoped Docker-socket proxy, fronting the raw socket for workspace-mcp.
+  # ADR-0001 §5 deferred this ("raw socket for v1"); ADR-0002 §3 ships it -
+  # complementary to, not a substitute for, the Kata runtime on `workspace`
+  # below: this shrinks what workspace-mcp's Docker access can do even if
+  # its own code is fully compromised, whereas Kata shrinks the blast
+  # radius of a *code* bug reaching the host kernel. Only CONTAINERS (to
+  # resolve the target container) and EXEC (to run in it) are allowed -
+  # everything else (IMAGES, NETWORKS, VOLUMES, POST-to-create-containers,
+  # etc.) is off by default in tecnativa/docker-socket-proxy. This is now
+  # the *only* container with the socket bind mount.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: pandora-docker-socket-proxy
+    # Its own network, not internal-workspace - orchestrator must not be
+    # able to reach this directly, only through workspace-mcp. See the
+    # internal-docker-proxy comment above.
+    networks: [internal-docker-proxy]
+    environment:
+      - CONTAINERS=1
+      - EXEC=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: on-failure
+
   workspace-mcp:
     image: pandora-workspace-mcp:dev
-    networks: [internal-workspace]
+    # internal-workspace: reachable from orchestrator (existing).
+    # internal-docker-proxy: reaches docker-socket-proxy (ADR-0002 §3) -
+    # orchestrator is not on this network, so it can't reach the proxy
+    # directly, only workspace-mcp's own narrow `exec` tool.
+    networks: [internal-workspace, internal-docker-proxy]
     environment:
       - WORKSPACE_CONTAINER_ID=pandora-workspace
-    volumes:
-      # The only container in the topology with this mount - see
-      # docs/adr/0001-phase-1-four-container-architecture.md §5.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # No socket bind mount here any more - the `docker` CLI talks to
+      # docker-socket-proxy's filtered API instead of the host daemon
+      # directly. See ADR-0002 §3 above.
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
     depends_on:
       - workspace
+      - docker-socket-proxy
     restart: on-failure
 
   chat-mcp:
