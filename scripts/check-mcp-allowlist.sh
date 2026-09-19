@@ -15,9 +15,25 @@
 # workspace-mcp/chat-mcp directly.
 #
 # Run from the repo root, with the stack already up:
-#   sh scripts/check-mcp-allowlist.sh
+#   sh scripts/check-mcp-allowlist.sh [env-file]
+#
+# [env-file] is optional - same profile convention as `nix run .#up`/`down`/
+# `git-unlock` (defaults to .env / project "bulkhead"); pass the *same*
+# profile path used to bring the target stack up to check a non-default
+# concurrent profile instead of guessing at the default one.
 
 set -u
+
+env_file="${1:-.env}"
+if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
+  echo "run this from the bulkhead repo root" >&2
+  exit 1
+fi
+. scripts/lib/profile.sh
+bulkhead_resolve_profile "$env_file" || exit 1
+dc() {
+  docker compose -p "$BULKHEAD_PROJECT_NAME" --env-file "$env_file" "$@"
+}
 
 checker_py='
 import asyncio, json, sys
@@ -87,7 +103,7 @@ async def main():
 asyncio.run(main())
 '
 
-result="$(docker compose exec -T orchestrator python3 -c "$checker_py" 2>&1)"
+result="$(dc exec -T orchestrator python3 -c "$checker_py" 2>&1)"
 json_line="$(printf '%s\n' "$result" | grep -E '^\[' | tail -1)"
 
 if [ -z "$json_line" ]; then

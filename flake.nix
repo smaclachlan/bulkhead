@@ -65,10 +65,14 @@
           # Usage: nix run .#chat                  # drops straight into a
           #                                         # persistent live chat
           #        nix run .#chat -- send "hi" --wait
+          #        nix run .#chat -- --env-file ./second.conf send "hi" --wait
           # (reads CHAT_MCP_TOKEN/CHAT_UI_URL from the environment if set;
           # otherwise pulls the token straight out of
           # `docker compose logs chat-mcp` itself, so this works with no
-          # setup beyond the stack being up.)
+          # setup beyond the stack being up. Against a non-default profile,
+          # pass --env-file so it derives the right port/project instead of
+          # defaulting to localhost:8787/the default stack's logs - see
+          # chat_mcp/cli.py.)
           chat = {
             type = "app";
             program = toString (pkgs.writeShellScript "bulkhead-chat" ''
@@ -95,11 +99,14 @@
               # KEY=value format, just a different bundle of
               # WORKSPACE_DOCKERFILE_DIR/WORKSPACE_REPO_PATH/
               # GIT_SSH_DEPLOY_KEY_HOST_PATH/etc, e.g. for a second project's
-              # workspace setup: `nix run .#up -- ./rust-build.conf`. This is a
-              # switch, not a second concurrent stack - bring the current
-              # one down first if one's already up under a different
-              # profile, since they'd otherwise collide on the same
-              # container/network/volume names.
+              # workspace setup: `nix run .#up -- ./rust-build.conf`. Profiles
+              # can run fully concurrently, not just switch between: each one
+              # resolves (via scripts/lib/profile.sh) to its own Compose
+              # project name, workspace container name, and workspace image
+              # tag, so two profiles never collide on a container/network/
+              # volume name or on the one image tag that's allowed to differ
+              # per profile. `down`/`git-unlock` still need the same profile
+              # path to target the right stack.
               no_cache=""
               env_file=".env"
               for arg in "$@"; do
@@ -122,21 +129,13 @@
               . "$env_file"
               set +a
 
-              # Stable project name derived from the profile file itself
-              # (not a value someone has to remember to set per profile) -
-              # this is what actually makes concurrent stacks possible:
-              # Compose auto-namespaces every network/volume by project
-              # name, so two profiles only collide if they resolve to the
-              # same name. `.env` itself keeps today's fixed "bulkhead" name
-              # so an unprofiled checkout's existing containers/volumes are
-              # unaffected. down/git-unlock derive this identically - it has
-              # to match exactly, or they'd target the wrong stack.
-              if [ "$env_file" = ".env" ]; then
-                project_name="bulkhead"
-              else
-                project_name="$(basename "$env_file" | sed 's/\.[^.]*$//' \
-                  | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')"
-              fi
+              # scripts/lib/profile.sh is the single source of truth for
+              # this derivation - also used by down/git-unlock below and by
+              # the validate-*.sh/check-mcp-allowlist.sh scripts, so every
+              # consumer resolves a given profile identically.
+              . scripts/lib/profile.sh
+              bulkhead_resolve_profile "$env_file"
+              project_name="$BULKHEAD_PROJECT_NAME"
               # Only workspace-mcp's docker-exec target needs a name fixed
               # in advance (everything else is found by Compose via
               # project+service labels, not by a literal name) - see
@@ -144,7 +143,11 @@
               # WORKSPACE_CONTAINER_ID comments. For the default profile
               # this is exactly "bulkhead-workspace", matching what was
               # hardcoded before this change.
-              export WORKSPACE_CONTAINER_NAME="''${project_name}-workspace"
+              export WORKSPACE_CONTAINER_NAME="$BULKHEAD_WORKSPACE_CONTAINER_NAME"
+              # The one image tag that's allowed to differ per profile - see
+              # scripts/lib/profile.sh's own comment for why the other five
+              # images aren't namespaced this way.
+              export WORKSPACE_IMAGE="$BULKHEAD_WORKSPACE_IMAGE"
 
               # Every docker-compose call from here on goes through this, so
               # Compose's own ''${VAR} interpolation always resolves against
@@ -162,12 +165,25 @@
 
               if [ -n "''${WORKSPACE_DOCKERFILE_DIR:-}" ]; then
                 echo "== Building workspace image from WORKSPACE_DOCKERFILE_DIR=$WORKSPACE_DOCKERFILE_DIR ==" >&2
-                ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-workspace:dev "$WORKSPACE_DOCKERFILE_DIR"
+                ${pkgs.docker}/bin/docker build $no_cache -t "$WORKSPACE_IMAGE" "$WORKSPACE_DOCKERFILE_DIR"
               else
                 echo "== Building workspace-image via Nix (default minimal image; set WORKSPACE_DOCKERFILE_DIR in your env file for a custom one) ==" >&2
                 result_link="$(mktemp -u)"
                 ${pkgs.nix}/bin/nix build .#workspace-image -o "$result_link"
-                ${pkgs.docker}/bin/docker load < "$result_link"
+                # workspace/default.nix always bakes the fixed tag
+                # bulkhead-workspace:dev (kept profile-agnostic so the Nix
+                # derivation itself stays pure) - retag to this profile's
+                # own $WORKSPACE_IMAGE right after loading it. flock-guarded:
+                # two concurrent `up` runs on this same default-image path
+                # both transiently load into that one fixed intermediate tag
+                # before retagging, and without the lock a badly-timed race
+                # could let one profile retag the other's freshly-loaded
+                # content under its own name.
+                (
+                  ${pkgs.util-linux}/bin/flock 9
+                  ${pkgs.docker}/bin/docker load < "$result_link"
+                  ${pkgs.docker}/bin/docker tag bulkhead-workspace:dev "$WORKSPACE_IMAGE"
+                ) 9>/tmp/bulkhead-workspace-image-load.lock
                 rm -f "$result_link"
               fi
 
@@ -253,16 +269,9 @@
                 exit 1
               fi
               env_file="''${1:-.env}"
-              if [ ! -f "$env_file" ]; then
-                echo "env file '$env_file' not found" >&2
-                exit 1
-              fi
-              if [ "$env_file" = ".env" ]; then
-                project_name="bulkhead"
-              else
-                project_name="$(basename "$env_file" | sed 's/\.[^.]*$//' \
-                  | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')"
-              fi
+              . scripts/lib/profile.sh
+              bulkhead_resolve_profile "$env_file" || exit 1
+              project_name="$BULKHEAD_PROJECT_NAME"
               exec ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" down
             '');
           };
@@ -291,16 +300,9 @@
                 exit 1
               fi
               env_file="''${1:-.env}"
-              if [ ! -f "$env_file" ]; then
-                echo "env file '$env_file' not found" >&2
-                exit 1
-              fi
-              if [ "$env_file" = ".env" ]; then
-                project_name="bulkhead"
-              else
-                project_name="$(basename "$env_file" | sed 's/\.[^.]*$//' \
-                  | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')"
-              fi
+              . scripts/lib/profile.sh
+              bulkhead_resolve_profile "$env_file" || exit 1
+              project_name="$BULKHEAD_PROJECT_NAME"
               exec ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" exec git-mcp git-mcp-unlock
             '');
           };

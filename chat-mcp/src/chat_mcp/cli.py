@@ -18,6 +18,15 @@ available either way, falls back to pulling the most recent one out of
 `docker compose logs chat-mcp` (same place a human would otherwise have to
 copy it from by hand) - run from the repo root, with the stack up.
 
+Against a non-default concurrent profile (see README's "Workspace image and
+concurrent profiles"), pass --env-file with the same profile path used to
+bring that stack up - this derives the right project name (for the
+docker-compose lookup above) and CHAT_UI_HOST_PORT the same way
+`nix run .#up`/`down`/`git-unlock`/the validate-*.sh scripts do (see
+scripts/lib/profile.sh), instead of silently defaulting to the wrong
+stack's port. Explicit --url/--token/env vars still take precedence over
+anything derived from --env-file.
+
 `repl` polls for new messages on a background thread, so a reply can appear
 while you're mid-way through typing the next line - unlike a plain
 request/response loop, this is a live view of the conversation, the same
@@ -61,15 +70,48 @@ def _post(base: str, path: str, token: str, body: dict) -> dict:
         return json.load(resp)
 
 
-def _discover_token() -> str:
+def _resolve_profile(env_file: str) -> dict | None:
+    """Resolve project name / CHAT_UI_HOST_PORT for env_file the same way
+    flake.nix's up/down/git-unlock apps and scripts/validate-*.sh do - see
+    scripts/lib/profile.sh, the single source of truth for this derivation.
+    Must be run from the repo root (same existing constraint as
+    `nix run .#chat`/_discover_token's bare `docker compose logs` below).
+    Returns None on any failure (wrong cwd, bad env file, etc.)."""
+    script = (
+        'set -a; . "$1"; set +a; . scripts/lib/profile.sh; '
+        'bulkhead_resolve_profile "$1" || exit 1; '
+        'printf "%s\\t%s\\n" "$BULKHEAD_PROJECT_NAME" "${CHAT_UI_HOST_PORT:-8787}"'
+    )
+    try:
+        result = subprocess.run(
+            ["sh", "-c", script, "sh", env_file],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    project, port = result.stdout.strip().split("\t")
+    return {"project": project, "port": port}
+
+
+def _discover_token(project_name: str | None = None, env_file: str | None = None) -> str:
     """Best-effort fallback: pull the most recent token out of chat-mcp's own
     logs, the same place a human would otherwise copy it from by hand. Only
     works from the repo root with the stack up - silently returns "" on any
     failure so the caller can give one clear error message instead of a
-    confusing subprocess traceback."""
+    confusing subprocess traceback. project_name/env_file (from --env-file)
+    scope the lookup to a specific concurrent profile's stack instead of
+    always assuming the default one."""
+    cmd = ["docker", "compose"]
+    if project_name:
+        cmd += ["-p", project_name, "--env-file", env_file]
+    cmd += ["logs", "chat-mcp"]
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", "chat-mcp"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=10,
@@ -140,8 +182,15 @@ def cmd_repl(args: argparse.Namespace, base: str, token: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bulkhead-chat")
-    parser.add_argument("--url", default=os.environ.get("CHAT_UI_URL", "http://localhost:8787"))
+    parser.add_argument("--url", default=os.environ.get("CHAT_UI_URL", ""))
     parser.add_argument("--token", default=os.environ.get("CHAT_MCP_TOKEN", ""))
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="profile env-file to target (same one passed to `nix run .#up`/`down`/"
+        "`git-unlock` for that stack) - derives the right project/port instead of "
+        "defaulting to the default stack's",
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_send = sub.add_parser("send", help="send one message")
@@ -157,7 +206,21 @@ def main() -> None:
     if args.command is None:
         args.func = cmd_repl
 
-    token = args.token or _discover_token()
+    profile = None
+    if args.env_file:
+        profile = _resolve_profile(args.env_file)
+        if profile is None:
+            print(
+                f"error: could not resolve profile '{args.env_file}' - run this "
+                "from the repo root",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    base_url = args.url or (f"http://localhost:{profile['port']}" if profile else "http://localhost:8787")
+    token = args.token or _discover_token(
+        profile["project"] if profile else None, args.env_file
+    )
     if not token:
         print(
             "error: no chat-mcp token found - pass --token, set CHAT_MCP_TOKEN, "
@@ -168,7 +231,7 @@ def main() -> None:
         sys.exit(2)
 
     try:
-        args.func(args, args.url, token)
+        args.func(args, base_url, token)
     except urllib.error.HTTPError as exc:
         print(f"HTTP error: {exc.code} {exc.reason}", file=sys.stderr)
         sys.exit(1)

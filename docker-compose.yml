@@ -71,7 +71,12 @@ networks:
 
 services:
   workspace:
-    image: bulkhead-workspace:dev
+    # Derived per-profile by `nix run .#up` (scripts/lib/profile.sh) - never
+    # hand-set in .env. This is the one image whose content is meant to vary
+    # by profile (a custom WORKSPACE_DOCKERFILE_DIR is the whole point of a
+    # second profile), so unlike the other five services below it can't share
+    # a fixed tag across concurrently-running profiles.
+    image: ${WORKSPACE_IMAGE:-bulkhead-workspace:dev}
     # Templated (not a bare literal) so concurrent stacks under different
     # profiles/projects don't collide on the same container name - flake.nix's
     # `up` computes this from the profile file so it's stable across runs of

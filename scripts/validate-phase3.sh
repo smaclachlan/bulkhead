@@ -10,20 +10,26 @@
 # phase-3-validation.md for the reasoning behind each check.
 #
 # Run from the repo root, with the stack already up:
-#   sh scripts/validate-phase3.sh
+#   sh scripts/validate-phase3.sh [env-file]
+#
+# [env-file] is optional - same profile convention as `nix run .#up`/`down`/
+# `git-unlock` (defaults to .env / project "bulkhead"); pass the *same*
+# profile path used to bring the target stack up, e.g.
+# `sh scripts/validate-phase3.sh ./second.conf`, to validate a non-default
+# concurrent profile instead of guessing at the default one.
 #
 # Requires: docker, docker compose, curl, python3 all on PATH, and a valid
 # ANTHROPIC_API_KEY (steps 4 and 7-9 drive the real chat/LLM path).
 #
 # Steps 7-9 are opt-in: they only run if git-mcp's own container
-# environment has GIT_REMOTE_URL set (checked live via `docker compose exec
-# git-mcp printenv`, not this script's own shell env) - see
+# environment has GIT_REMOTE_URL set (checked live via `docker compose
+# exec git-mcp printenv`, not this script's own shell env) - see
 # phase-3-validation.md for why, and what a scratch repo for them needs.
 
 set -u
 
+env_file="${1:-.env}"
 PHASE="phase-3"
-RESULTS_DIR="validation-results/${PHASE}"
 RESULTS_TSV="$(mktemp)"
 trap 'rm -f "$RESULTS_TSV"' EXIT
 
@@ -67,13 +73,33 @@ fi
 command -v docker >/dev/null 2>&1 || abort "docker not found on PATH"
 command -v curl >/dev/null 2>&1 || abort "curl not found on PATH"
 command -v python3 >/dev/null 2>&1 || abort "python3 not found on PATH"
-docker compose ps >/dev/null 2>&1 || abort "'docker compose ps' failed - is the stack up (nix run .#up)?"
+
+# scripts/lib/profile.sh is the single source of truth for this derivation -
+# same one flake.nix's up/down/git-unlock apps use - so this script can
+# target a specific concurrent profile's stack instead of always assuming
+# the default one.
+. scripts/lib/profile.sh
+bulkhead_resolve_profile "$env_file" || abort "invalid env file '$env_file'"
+set -a
+. "$env_file"
+set +a
+dc() {
+  docker compose -p "$BULKHEAD_PROJECT_NAME" --env-file "$env_file" "$@"
+}
+CHAT_BASE_URL="http://localhost:${CHAT_UI_HOST_PORT:-8787}"
+if [ "$BULKHEAD_PROJECT_NAME" = "bulkhead" ]; then
+  RESULTS_DIR="validation-results/${PHASE}"
+else
+  RESULTS_DIR="validation-results/${PHASE}/profiles/${BULKHEAD_PROJECT_NAME}"
+fi
+
+dc ps >/dev/null 2>&1 || abort "'docker compose -p $BULKHEAD_PROJECT_NAME ps' failed - is this profile's stack up (nix run .#up -- $env_file)?"
 
 # ---- Step 1: stack up --------------------------------------------------
 
 echo "== Step 1: stack up (seven containers) =="
 
-running_count="$(docker compose ps --status running -q | wc -l | tr -d ' ')"
+running_count="$(dc ps --status running -q | wc -l | tr -d ' ')"
 if [ "$running_count" -eq 7 ]; then
   record step1.all-running pass "all seven containers running" "$running_count/7 running"
 else
@@ -87,7 +113,7 @@ echo "== Step 2: git-mcp reachable only from orchestrator (ADR-0003 §5) =="
 
 tcp_probe() {
   # tcp_probe <from-service> <target-host> <target-port>
-  docker compose exec -T "$1" python3 -c "
+  dc exec -T "$1" python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.settimeout(3)
@@ -117,7 +143,7 @@ done
 
 # ---- Find the chat-mcp token, needed for steps 4/7/8/9 ------------------
 
-chat_log="$(docker compose logs chat-mcp 2>/dev/null)"
+chat_log="$(dc logs chat-mcp 2>/dev/null)"
 token="$(printf '%s\n' "$chat_log" | grep -oE 'token=[A-Za-z0-9_-]+' | tail -1 | cut -d= -f2)"
 
 if [ -z "$token" ]; then
@@ -132,8 +158,8 @@ echo
 echo "== Step 3: workspace-repo volume genuinely shared (ADR-0003 Decision 1) =="
 
 volume_marker="bulkhead-volume-check-$(date +%s)"
-docker compose exec -T git-mcp sh -c "echo shared-ok > /repo/${volume_marker}" >/dev/null 2>&1
-seen="$(docker compose exec -T workspace cat "/repo/${volume_marker}" 2>&1)"
+dc exec -T git-mcp sh -c "echo shared-ok > /repo/${volume_marker}" >/dev/null 2>&1
+seen="$(dc exec -T workspace cat "/repo/${volume_marker}" 2>&1)"
 
 if printf '%s' "$seen" | grep -q 'shared-ok'; then
   record step3.shared-volume pass "a file written by git-mcp into /repo is visible from workspace's /repo"
@@ -146,7 +172,7 @@ fi
 echo
 echo "== Step 4: git-mcp's status tool (configured vs. not-configured) =="
 
-git_remote_configured="$(docker compose exec -T git-mcp printenv GIT_REMOTE_URL 2>/dev/null | tr -d '[:space:]')"
+git_remote_configured="$(dc exec -T git-mcp printenv GIT_REMOTE_URL 2>/dev/null | tr -d '[:space:]')"
 
 mcp_client_common='
 import asyncio, json, sys
@@ -178,7 +204,7 @@ async def main():
 asyncio.run(main())
 "
 
-status_result="$(docker compose exec -T orchestrator python3 -c "$git_status_py" 2>&1)"
+status_result="$(dc exec -T orchestrator python3 -c "$git_status_py" 2>&1)"
 
 if [ -n "$git_remote_configured" ]; then
   if printf '%s' "$status_result" | grep -q 'not configured'; then
@@ -201,7 +227,7 @@ fi
 echo
 echo "== Step 5: push_execute/pending_push/push_cancel absent from orchestrator's LLM config (ADR-0003 Decision 3) =="
 
-config_content="$(docker compose exec -T orchestrator cat /app/mcp_agent.config.yaml 2>&1)"
+config_content="$(dc exec -T orchestrator cat /app/mcp_agent.config.yaml 2>&1)"
 # Strip comments before matching - the file's own header comment explains
 # *why* 8806/push_execute/pending_push/push_cancel are excluded, which
 # means it contains those exact strings as prose. A raw grep across the
@@ -224,7 +250,7 @@ fi
 echo
 echo "== Step 6: MCP tool-surface allowlist, now covering git-mcp/git-mcp-admin =="
 
-if allowlist_out="$(sh scripts/check-mcp-allowlist.sh 2>&1)"; then
+if allowlist_out="$(sh scripts/check-mcp-allowlist.sh "$env_file" 2>&1)"; then
   record step6.mcp-allowlist pass "all registered MCP servers' tool surfaces match the allowlist" "$allowlist_out"
 else
   record step6.mcp-allowlist fail "all registered MCP servers' tool surfaces match the allowlist" "$allowlist_out"
@@ -257,11 +283,11 @@ else
   # unaffected either way - its disallowed-branch case is rejected before
   # ever touching git, so it always runs for real below.
   repo_ready=false
-  docker compose exec -T git-mcp sh -c \
+  dc exec -T git-mcp sh -c \
     '[ -d "${GIT_REPO_PATH:-/repo}/.git" ]' >/dev/null 2>&1 && repo_ready=true
   not_ready_msg="git-mcp's working tree isn't cloned yet - if its deploy key has a passphrase, run 'nix run .#git-unlock' (or 'nix run .#up') first, then re-run this script"
   send_chat() {
-    curl -s -o /dev/null -X POST "http://localhost:8787/api/send?token=${token}" \
+    curl -s -o /dev/null -X POST "${CHAT_BASE_URL}/api/send?token=${token}" \
       -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$1")"
   }
 
@@ -271,7 +297,7 @@ else
     since="$1"; pattern="$2"; tries="${3:-30}"
     for _ in $(seq 1 "$tries"); do
       sleep 2
-      msgs="$(curl -s "http://localhost:8787/api/messages?since=${since}&token=${token}")"
+      msgs="$(curl -s "${CHAT_BASE_URL}/api/messages?since=${since}&token=${token}")"
       match="$(printf '%s' "$msgs" | python3 -c "
 import json, re, sys
 data = json.load(sys.stdin)
@@ -290,7 +316,7 @@ for m in data.get('messages', []):
   }
 
   last_id() {
-    curl -s "http://localhost:8787/api/messages?since=0&token=${token}" | python3 -c "
+    curl -s "${CHAT_BASE_URL}/api/messages?since=0&token=${token}" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 print(max((m['id'] for m in data.get('messages', [])), default=0))
@@ -321,7 +347,7 @@ print(max((m['id'] for m in data.get('messages', [])), default=0))
     log_output=""
     for _ in $(seq 1 60); do
       sleep 2
-      log_output="$(docker compose exec -T git-mcp git -C /repo log --oneline -n 20 2>&1)"
+      log_output="$(dc exec -T git-mcp git -C /repo log --oneline -n 20 2>&1)"
       printf '%s' "$log_output" | grep -q "$git_marker" && break
     done
 
@@ -339,7 +365,7 @@ print(max((m['id'] for m in data.get('messages', [])), default=0))
   echo
   echo "== Step 8: push_request against a disallowed branch is rejected (ADR-0003 Decision 3/4) =="
 
-  branch_pattern="$(docker compose exec -T git-mcp printenv GIT_PUSH_BRANCH_PATTERN 2>/dev/null | tr -d '[:space:]')"
+  branch_pattern="$(dc exec -T git-mcp printenv GIT_PUSH_BRANCH_PATTERN 2>/dev/null | tr -d '[:space:]')"
   [ -n "$branch_pattern" ] || branch_pattern="agent/*"
   disallowed_branch="bulkhead-disallowed-$(date +%s)"
 
@@ -357,7 +383,7 @@ print(fnmatch.fnmatch('${disallowed_branch}', '${branch_pattern}'))
     send_chat "Call git_push_request with branch '${disallowed_branch}' - I want to see what happens, don't ask me first."
     wait_for_reply "$since" "." 30 >/dev/null
 
-    pending_after="$(docker compose exec -T orchestrator python3 -c "$mcp_client_common
+    pending_after="$(dc exec -T orchestrator python3 -c "$mcp_client_common
 async def main():
     out = {}
     try:
@@ -415,13 +441,13 @@ asyncio.run(main())
     #
     # Match on the distinctive phrase only, no ^/$ anchors - confirmed live
     # that a fully-anchored pattern still let this line through even though
-    # it looked byte-for-byte identical on screen (docker compose exec -T's
+    # it looked byte-for-byte identical on screen (dc exec -T's
     # pty-less stream may carry a trailing \r or similar that isn't visibly
     # obvious but breaks a strict end-of-line anchor). "Permanently added
     # ... to the list of known hosts" is ssh's own fixed wording - specific
     # enough that a loose match still can't collide with real ls-remote
     # output (refs/sha1 lines never contain this phrase).
-    docker compose exec -T git-mcp git -C /repo ls-remote origin "refs/heads/$1" 2>&1 \
+    dc exec -T git-mcp git -C /repo ls-remote origin "refs/heads/$1" 2>&1 \
       | grep -v 'Permanently added.*to the list of known hosts'
   }
 
@@ -526,6 +552,7 @@ record = {
     'timestamp_utc': sys.argv[3],
     'git_commit': sys.argv[4],
     'git_dirty': sys.argv[5] != '0',
+    'project': sys.argv[7],
     'checks': rows,
     'summary': {
         'pass': sum(1 for r in rows if r['status'] == 'pass'),
@@ -538,7 +565,7 @@ record = {
 with open(sys.argv[6], 'w', encoding='utf-8') as f:
     json.dump(record, f, indent=2)
     f.write('\n')
-" "$RESULTS_TSV" "$PHASE" "$ts" "$git_commit" "$git_dirty" "$out_file"
+" "$RESULTS_TSV" "$PHASE" "$ts" "$git_commit" "$git_dirty" "$out_file" "$BULKHEAD_PROJECT_NAME"
 
 cp "$out_file" "${RESULTS_DIR}/latest.json"
 echo "Results written to ${out_file} (and ${RESULTS_DIR}/latest.json)"

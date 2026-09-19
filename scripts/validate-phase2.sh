@@ -9,7 +9,13 @@
 # section and phase-2-validation.md for the reasoning behind each check.
 #
 # Run from the repo root, with the stack already up:
-#   sh scripts/validate-phase2.sh
+#   sh scripts/validate-phase2.sh [env-file]
+#
+# [env-file] is optional - same profile convention as `nix run .#up`/`down`/
+# `git-unlock` (defaults to .env / project "bulkhead"); pass the *same*
+# profile path used to bring the target stack up, e.g.
+# `sh scripts/validate-phase2.sh ./second.conf`, to validate a non-default
+# concurrent profile instead of guessing at the default one.
 #
 # Requires: docker, docker compose, curl, python3 all on PATH, and a valid
 # ANTHROPIC_API_KEY (same as phase 1 - steps 3, 5 and 7 drive the real
@@ -17,8 +23,8 @@
 
 set -u
 
+env_file="${1:-.env}"
 PHASE="phase-2"
-RESULTS_DIR="validation-results/${PHASE}"
 RESULTS_TSV="$(mktemp)"
 trap 'rm -f "$RESULTS_TSV"' EXIT
 
@@ -62,7 +68,27 @@ fi
 command -v docker >/dev/null 2>&1 || abort "docker not found on PATH"
 command -v curl >/dev/null 2>&1 || abort "curl not found on PATH"
 command -v python3 >/dev/null 2>&1 || abort "python3 not found on PATH"
-docker compose ps >/dev/null 2>&1 || abort "'docker compose ps' failed - is the stack up (nix run .#up)?"
+
+# scripts/lib/profile.sh is the single source of truth for this derivation -
+# same one flake.nix's up/down/git-unlock apps use - so this script can
+# target a specific concurrent profile's stack instead of always assuming
+# the default one.
+. scripts/lib/profile.sh
+bulkhead_resolve_profile "$env_file" || abort "invalid env file '$env_file'"
+set -a
+. "$env_file"
+set +a
+dc() {
+  docker compose -p "$BULKHEAD_PROJECT_NAME" --env-file "$env_file" "$@"
+}
+CHAT_BASE_URL="http://localhost:${CHAT_UI_HOST_PORT:-8787}"
+if [ "$BULKHEAD_PROJECT_NAME" = "bulkhead" ]; then
+  RESULTS_DIR="validation-results/${PHASE}"
+else
+  RESULTS_DIR="validation-results/${PHASE}/profiles/${BULKHEAD_PROJECT_NAME}"
+fi
+
+dc ps >/dev/null 2>&1 || abort "'docker compose -p $BULKHEAD_PROJECT_NAME ps' failed - is this profile's stack up (nix run .#up -- $env_file)?"
 
 # ---- Step 1: stack up --------------------------------------------------
 
@@ -76,7 +102,7 @@ echo "== Step 1: stack up (seven containers) =="
 # would report a false step1 failure ("7/6 running") on every phase-2 run
 # against current docker-compose.yml, masking real regressions in the
 # noise.
-running_count="$(docker compose ps --status running -q | wc -l | tr -d ' ')"
+running_count="$(dc ps --status running -q | wc -l | tr -d ' ')"
 if [ "$running_count" -eq 7 ]; then
   record step1.all-running pass "all seven containers running" "$running_count/7 running"
 else
@@ -90,7 +116,7 @@ echo "== Step 2: network segmentation around the new containers =="
 
 check_no_egress() {
   service="$1"
-  if docker compose exec -T "$service" python3 -c \
+  if dc exec -T "$service" python3 -c \
     "import urllib.request; urllib.request.urlopen('https://example.com', timeout=3)" \
     >/dev/null 2>&1; then
     record "step2.${service}-no-egress" fail "$service has no internet egress" "urlopen unexpectedly succeeded"
@@ -107,7 +133,7 @@ check_no_egress docker-socket-proxy
 # SDK's client API shape.
 tcp_probe() {
   # tcp_probe <from-service> <target-host> <target-port>
-  docker compose exec -T "$1" python3 -c "
+  dc exec -T "$1" python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.settimeout(3)
@@ -148,7 +174,7 @@ fi
 
 # ---- Find the chat-mcp token, needed for everything below -------------
 
-chat_log="$(docker compose logs chat-mcp 2>/dev/null)"
+chat_log="$(dc logs chat-mcp 2>/dev/null)"
 token="$(printf '%s\n' "$chat_log" | grep -oE 'token=[A-Za-z0-9_-]+' | tail -1 | cut -d= -f2)"
 
 if [ -z "$token" ]; then
@@ -170,14 +196,14 @@ else
   # to CHAT_POLL_TIMEOUT_SECONDS (default 30s) at a time - a gap shorter
   # than that will almost always land inside the same call's window and
   # look like it "didn't advance" even though presence is working fine.
-  poll_timeout="$(docker compose exec -T orchestrator printenv CHAT_POLL_TIMEOUT_SECONDS 2>/dev/null | tr -d '[:space:]')"
+  poll_timeout="$(dc exec -T orchestrator printenv CHAT_POLL_TIMEOUT_SECONDS 2>/dev/null | tr -d '[:space:]')"
   [ -n "$poll_timeout" ] || poll_timeout=30
   wait_seconds=$((poll_timeout + 10))
 
-  status1="$(curl -s "http://localhost:8787/api/status?token=${token}")"
+  status1="$(curl -s "${CHAT_BASE_URL}/api/status?token=${token}")"
   seen1="$(printf '%s' "$status1" | python3 -c "import json,sys; print(json.load(sys.stdin).get('last_seen'))" 2>/dev/null)"
   sleep "$wait_seconds"
-  status2="$(curl -s "http://localhost:8787/api/status?token=${token}")"
+  status2="$(curl -s "${CHAT_BASE_URL}/api/status?token=${token}")"
   seen2="$(printf '%s' "$status2" | python3 -c "import json,sys; print(json.load(sys.stdin).get('last_seen'))" 2>/dev/null)"
 
   if [ -n "$seen1" ] && [ -n "$seen2" ] && [ "$seen1" != "None" ] && [ "$seen2" != "None" ] \
@@ -189,7 +215,7 @@ else
 
   activity_id="$(date +%s)"
   send_code="$(curl -s -o /dev/null -w '%{http_code}' \
-    -X POST "http://localhost:8787/api/send?token=${token}" \
+    -X POST "${CHAT_BASE_URL}/api/send?token=${token}" \
     -H 'Content-Type: application/json' \
     -d "{\"text\":\"activity check ${activity_id}: reply with just OK\"}")"
 
@@ -198,7 +224,7 @@ else
   else
     seq=""
     for _ in $(seq 1 30); do
-      s="$(curl -s "http://localhost:8787/api/status?token=${token}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)"
+      s="$(curl -s "${CHAT_BASE_URL}/api/status?token=${token}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)"
       case "$seq" in
         *"$s"*) : ;;  # collapse immediate repeats
         *) seq="${seq}${seq:+,}${s}" ;;
@@ -230,7 +256,7 @@ if [ -z "${token:-}" ]; then
   record step4.cli-roundtrip fail "skipped - no chat-mcp token"
 else
   cli_marker="bulkhead-cli-check-$(date +%s)"
-  cli_reply="$(CHAT_MCP_TOKEN="$token" CHAT_UI_URL="http://localhost:8787" \
+  cli_reply="$(CHAT_MCP_TOKEN="$token" CHAT_UI_URL="${CHAT_BASE_URL}" \
     python3 chat-mcp/src/chat_mcp/cli.py send \
     "Reply with exactly this text and nothing else: ${cli_marker}" --wait --timeout 60 2>&1)"
 
@@ -253,7 +279,7 @@ else
   content="bulkhead-proxy-check-${run_id}"
   prompt="Run this exact shell command and show me the output: echo ${content}"
   send_code="$(curl -s -o /dev/null -w '%{http_code}' \
-    -X POST "http://localhost:8787/api/send?token=${token}" \
+    -X POST "${CHAT_BASE_URL}/api/send?token=${token}" \
     -H 'Content-Type: application/json' \
     -d "{\"text\":\"${prompt}\"}")"
 
@@ -261,7 +287,7 @@ else
   if [ "$send_code" = "200" ]; then
     for _ in $(seq 1 30); do
       sleep 2
-      msgs="$(curl -s "http://localhost:8787/api/messages?since=0&token=${token}")"
+      msgs="$(curl -s "${CHAT_BASE_URL}/api/messages?since=0&token=${token}")"
       reply_text="$(printf '%s' "$msgs" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -337,7 +363,7 @@ async def main():
 asyncio.run(main())
 "
 
-write_result="$(docker compose exec -T orchestrator python3 -c "$write_marker_py" 2>&1)"
+write_result="$(dc exec -T orchestrator python3 -c "$write_marker_py" 2>&1)"
 if printf '%s' "$write_result" | grep -q '"ok": true'; then
   record step6.memory-write pass "wrote a marker entity into memory-mcp"
 else
@@ -345,10 +371,10 @@ else
 fi
 
 echo "restarting memory-mcp..."
-docker compose restart memory-mcp >/dev/null 2>&1
+dc restart memory-mcp >/dev/null 2>&1
 for _ in $(seq 1 15); do
   sleep 2
-  docker compose exec -T orchestrator python3 -c "
+  dc exec -T orchestrator python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2)
 try:
@@ -360,7 +386,7 @@ finally:
 " 2>/dev/null | grep -q up && break
 done
 
-read_result="$(docker compose exec -T orchestrator python3 -c "$read_marker_py" 2>&1)"
+read_result="$(dc exec -T orchestrator python3 -c "$read_marker_py" 2>&1)"
 if printf '%s' "$read_result" | grep -q "$memory_marker"; then
   record step6.memory-survives-restart pass "marker entity survived a memory-mcp container restart" "$read_result"
 else
@@ -384,15 +410,15 @@ else
   # "Requesting tool call" log lines for server_name "memory" before/after
   # to confirm a real tool call happened, not just a plausible-looking
   # reply.
-  mem_calls_before="$(docker compose logs orchestrator 2>/dev/null | grep -c '"server_name": "memory"')"
+  mem_calls_before="$(dc logs orchestrator 2>/dev/null | grep -c '"server_name": "memory"')"
 
-  curl -s -o /dev/null -X POST "http://localhost:8787/api/send?token=${token}" \
+  curl -s -o /dev/null -X POST "${CHAT_BASE_URL}/api/send?token=${token}" \
     -H 'Content-Type: application/json' -d "{\"text\":\"${remember_prompt}\"}" >/dev/null
 
   ack_seen=0
   for _ in $(seq 1 30); do
     sleep 2
-    msgs="$(curl -s "http://localhost:8787/api/messages?since=0&token=${token}")"
+    msgs="$(curl -s "${CHAT_BASE_URL}/api/messages?since=0&token=${token}")"
     if printf '%s' "$msgs" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -403,7 +429,7 @@ sys.exit(0 if any(m.get('role') != 'user' and '${session_marker}' in (m.get('tex
     fi
   done
 
-  mem_calls_after="$(docker compose logs orchestrator 2>/dev/null | grep -c '"server_name": "memory"')"
+  mem_calls_after="$(dc logs orchestrator 2>/dev/null | grep -c '"server_name": "memory"')"
 
   if [ "$ack_seen" -ne 1 ]; then
     record step7.cross-session-recall fail "orchestrator acknowledged storing the marker" "no ack seen within 60s"
@@ -411,27 +437,27 @@ sys.exit(0 if any(m.get('role') != 'user' and '${session_marker}' in (m.get('tex
     record step7.cross-session-recall fail "orchestrator actually called a memory_* tool to store the marker" \
       "replied with the marker but no new memory tool call seen in logs ($mem_calls_before -> $mem_calls_after) - it may have just echoed it conversationally"
   else
-    since_before_restart="$(curl -s "http://localhost:8787/api/messages?since=0&token=${token}" | python3 -c "
+    since_before_restart="$(curl -s "${CHAT_BASE_URL}/api/messages?since=0&token=${token}" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 print(max((m['id'] for m in data.get('messages', [])), default=0))
 " 2>/dev/null)"
 
     echo "restarting orchestrator (fresh conversation, same as a new session)..."
-    docker compose restart orchestrator >/dev/null 2>&1
+    dc restart orchestrator >/dev/null 2>&1
     for _ in $(seq 1 20); do
       sleep 2
-      docker compose logs orchestrator 2>/dev/null | grep -q "ready, polling chat" && break
+      dc logs orchestrator 2>/dev/null | grep -q "ready, polling chat" && break
     done
 
     recall_prompt="Without me repeating it - what validation marker did I ask you to remember earlier in a previous message?"
-    curl -s -o /dev/null -X POST "http://localhost:8787/api/send?token=${token}" \
+    curl -s -o /dev/null -X POST "${CHAT_BASE_URL}/api/send?token=${token}" \
       -H 'Content-Type: application/json' -d "{\"text\":\"${recall_prompt}\"}" >/dev/null
 
     recalled=0
     for _ in $(seq 1 30); do
       sleep 2
-      msgs="$(curl -s "http://localhost:8787/api/messages?since=${since_before_restart}&token=${token}")"
+      msgs="$(curl -s "${CHAT_BASE_URL}/api/messages?since=${since_before_restart}&token=${token}")"
       if printf '%s' "$msgs" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -455,7 +481,7 @@ fi
 echo
 echo "== Step 8: Kata runtime (ADR-0002 Decision 1, opt-in) =="
 
-# Gated on bulkhead-workspace's actual observed runtime, not the
+# Gated on the workspace container's actual observed runtime, not the
 # WORKSPACE_RUNTIME env var - that var only controls what `docker
 # compose up` requests at container-creation time (read from .env by
 # Compose itself), so a shell that doesn't happen to have it exported has
@@ -464,12 +490,12 @@ echo "== Step 8: Kata runtime (ADR-0002 Decision 1, opt-in) =="
 # it's invoked bare, with .env sourced, or with the var overridden by
 # hand - and it also means a stale `.env` (edited after the stack was last
 # brought up) gets caught as a real mismatch instead of masked.
-runtime="$(docker inspect bulkhead-workspace --format '{{.HostConfig.Runtime}}' 2>/dev/null)"
+runtime="$(docker inspect "$BULKHEAD_WORKSPACE_CONTAINER_NAME" --format '{{.HostConfig.Runtime}}' 2>/dev/null)"
 if [ "$runtime" != "kata" ]; then
-  skip step8.kata-runtime "Kata runtime check (bulkhead-workspace's actual runtime is '${runtime:-<container not found>}', not kata - expected on a checkout without Kata opted in)"
-  skip step8.kata-shim-process "Kata shim process check (bulkhead-workspace's actual runtime is '${runtime:-<container not found>}', not kata)"
+  skip step8.kata-runtime "Kata runtime check (${BULKHEAD_WORKSPACE_CONTAINER_NAME}'s actual runtime is '${runtime:-<container not found>}', not kata - expected on a checkout without Kata opted in)"
+  skip step8.kata-shim-process "Kata shim process check (${BULKHEAD_WORKSPACE_CONTAINER_NAME}'s actual runtime is '${runtime:-<container not found>}', not kata)"
 else
-  record step8.kata-runtime pass "bulkhead-workspace's runtime is 'kata'"
+  record step8.kata-runtime pass "${BULKHEAD_WORKSPACE_CONTAINER_NAME}'s runtime is 'kata'"
 
   # docker inspect's runtime label only reflects what Docker was told, not
   # what actually happened (see phase-2-validation.md's "manual-only
@@ -480,11 +506,11 @@ else
   # this catches that regression without needing the full guest/host
   # kernel-diff probe (still manual - see that doc - since only a human
   # can compare against the *host's* kernel from outside the harness).
-  container_id="$(docker inspect bulkhead-workspace --format '{{.Id}}' 2>/dev/null)"
+  container_id="$(docker inspect "$BULKHEAD_WORKSPACE_CONTAINER_NAME" --format '{{.Id}}' 2>/dev/null)"
   if [ -n "$container_id" ] && ps -eo cmd 2>/dev/null | grep -v grep | grep -q "containerd-shim-kata-v2.*${container_id}"; then
-    record step8.kata-shim-process pass "a containerd-shim-kata-v2 process is running for bulkhead-workspace's container ID"
+    record step8.kata-shim-process pass "a containerd-shim-kata-v2 process is running for ${BULKHEAD_WORKSPACE_CONTAINER_NAME}'s container ID"
   else
-    record step8.kata-shim-process fail "a containerd-shim-kata-v2 process is running for bulkhead-workspace's container ID" "no matching process found for ${container_id:-<unknown container id>} - runtime label says kata but no real shim/VMM is backing it"
+    record step8.kata-shim-process fail "a containerd-shim-kata-v2 process is running for ${BULKHEAD_WORKSPACE_CONTAINER_NAME}'s container ID" "no matching process found for ${container_id:-<unknown container id>} - runtime label says kata but no real shim/VMM is backing it"
   fi
 fi
 
@@ -493,7 +519,7 @@ fi
 echo
 echo "== Step 9: MCP tool-surface allowlist (ADR-0002 Decision 5 prototype) =="
 
-if allowlist_out="$(sh scripts/check-mcp-allowlist.sh 2>&1)"; then
+if allowlist_out="$(sh scripts/check-mcp-allowlist.sh "$env_file" 2>&1)"; then
   record step9.mcp-allowlist pass "workspace-mcp/memory-mcp tool surfaces match the allowlist" "$allowlist_out"
 else
   record step9.mcp-allowlist fail "workspace-mcp/memory-mcp tool surfaces match the allowlist" "$allowlist_out"
@@ -533,6 +559,7 @@ record = {
     'timestamp_utc': sys.argv[3],
     'git_commit': sys.argv[4],
     'git_dirty': sys.argv[5] != '0',
+    'project': sys.argv[7],
     'checks': rows,
     'summary': {
         'pass': sum(1 for r in rows if r['status'] == 'pass'),
@@ -545,7 +572,7 @@ record = {
 with open(sys.argv[6], 'w', encoding='utf-8') as f:
     json.dump(record, f, indent=2)
     f.write('\n')
-" "$RESULTS_TSV" "$PHASE" "$ts" "$git_commit" "$git_dirty" "$out_file"
+" "$RESULTS_TSV" "$PHASE" "$ts" "$git_commit" "$git_dirty" "$out_file" "$BULKHEAD_PROJECT_NAME"
 
 cp "$out_file" "${RESULTS_DIR}/latest.json"
 echo "Results written to ${out_file} (and ${RESULTS_DIR}/latest.json)"
