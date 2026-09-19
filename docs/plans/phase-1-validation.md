@@ -66,7 +66,7 @@ and so was silently dropped by `--no-install-recommends`. Fixed by installing
    - [ ] The `chat-mcp` logs print a line like `[chat-mcp] chat UI: http://localhost:8787/?token=...`. (Chat UI was reached and used successfully; this specific log line wasn't explicitly checked.)
 
 2. **Confirm network segmentation before doing anything else** (fail fast if this is wrong - no point validating the happy path on a leaky sandbox):
-   - [ ] `docker inspect pandora-workspace --format '{{.HostConfig.NetworkMode}}'` → `none`. Not run explicitly this pass, but see step 4: the Orchestrator's LLM independently probed this from inside the container via `workspace_exec` (DNS, outbound TCP, curl/wget/ping all confirmed absent), consistent with this holding.
+   - [ ] `docker inspect axle-workspace --format '{{.HostConfig.NetworkMode}}'` → `none`. Not run explicitly this pass, but see step 4: the Orchestrator's LLM independently probed this from inside the container via `workspace_exec` (DNS, outbound TCP, curl/wget/ping all confirmed absent), consistent with this holding.
    - [ ] `docker compose exec chat-mcp python3 -c "import urllib.request; urllib.request.urlopen('https://example.com', timeout=3)"` → fails/times out (chat-mcp has no egress).
    - [ ] `docker compose exec workspace-mcp python3 -c "import urllib.request; urllib.request.urlopen('https://example.com', timeout=3)"` → fails/times out (same).
    - [ ] Only `orchestrator` can reach the internet (it needs to, for the Anthropic API — no direct test needed here since step 4 exercises it for real).
@@ -75,14 +75,14 @@ and so was silently dropped by `--no-install-recommends`. Fixed by installing
    - [x] The page loads and shows an empty chat log and a message box.
    - [x] Loading `http://localhost:8787/` **without** the token query param returns 403, not the page (confirms the auth gate is live, not just present in code). Confirmed in practice: the bare URL doesn't work, only the printed link with the token does.
 
-4. **Send a message that requires a command.** E.g.: `What files are in the workspace right now? Also create a file called hello.txt with the text "pandora works" in it, then show me its contents.`
+4. **Send a message that requires a command.** E.g.: `What files are in the workspace right now? Also create a file called hello.txt with the text "axle works" in it, then show me its contents.`
    - [x] A reply appears in the chat UI within a reasonable time (no manual polling/refresh needed beyond the page's own 1s poll).
    - [x] The reply's content is consistent with a real command having run — confirmed two ways: (1) a network-probing prompt ("can you access container now?" / "can you search the internet?"), where the LLM used `workspace_exec` to run real commands inside the Workspace container (DNS/TCP/curl/wget/ping checks) and reported real, non-generic results; (2) the runbook's own suggested prompt, where the LLM used `workspace_exec` with `echo` to create `hello.txt` and `cat` to read it back, and relayed the real file contents in its reply.
 
 5. **Confirm containment held during step 4**, not just that it worked:
-   - [ ] `docker exec pandora-workspace sh -c "cat hello.txt"` on the host shows the file the agent created — proving the command really executed *inside* the Workspace container, not somewhere else. The agent itself used `workspace_exec` with `cat` to read the file back and relayed real contents in its reply, which is suggestive but not independent — still worth an operator-run `docker exec` to confirm the agent wasn't just repeating what it wrote without truly re-reading it.
-   - [x] `docker compose logs workspace-mcp` (or `docker logs pandora-workspace-mcp-1`) shows the corresponding `docker exec` call — confirmed, e.g. `[workspace-mcp] exec exit=0: 'echo "hello" > hello.txt && cat hello.txt && pwd && ls -la hello.txt'`. Note: `pandora-workspace` itself shows zero logs, which is expected, not a bug — `docker exec` output is a separate session, never written to the target container's own log stream; the audit trail is `workspace-mcp`'s printed line, by design (see Milestone 6).
-   - [x] Nothing outside `pandora-workspace` was touched — confirmed no `hello.txt` (or equivalent) landed on the host filesystem.
+   - [ ] `docker exec axle-workspace sh -c "cat hello.txt"` on the host shows the file the agent created — proving the command really executed *inside* the Workspace container, not somewhere else. The agent itself used `workspace_exec` with `cat` to read the file back and relayed real contents in its reply, which is suggestive but not independent — still worth an operator-run `docker exec` to confirm the agent wasn't just repeating what it wrote without truly re-reading it.
+   - [x] `docker compose logs workspace-mcp` (or `docker logs axle-workspace-mcp-1`) shows the corresponding `docker exec` call — confirmed, e.g. `[workspace-mcp] exec exit=0: 'echo "hello" > hello.txt && cat hello.txt && pwd && ls -la hello.txt'`. Note: `axle-workspace` itself shows zero logs, which is expected, not a bug — `docker exec` output is a separate session, never written to the target container's own log stream; the audit trail is `workspace-mcp`'s printed line, by design (see Milestone 6).
+   - [x] Nothing outside `axle-workspace` was touched — confirmed no `hello.txt` (or equivalent) landed on the host filesystem.
 
 6. **Confirm the loop survives a no-op turn.** Send a message needing no tool use (e.g. `hi`) and confirm a reply comes back without the Orchestrator process restarting (`docker compose ps` shows the same container, not a fresh restart count).
    - [ ] Not explicitly tested with a no-tool-use message, though the loop did survive across multiple consecutive tool-using turns in the same session.
@@ -90,10 +90,10 @@ and so was silently dropped by `--no-install-recommends`. Fixed by installing
 ## If something fails
 
 - **Orchestrator can't reach `workspace-mcp`/`chat-mcp` by hostname** — confirm all three are on the `internal` Compose network (`docker network inspect <project>_internal`).
-- **`workspace-mcp` can't `docker exec` into `pandora-workspace`** — confirm the socket bind mount (`docker inspect pandora-workspace-mcp` → `Mounts`) and that `WORKSPACE_CONTAINER_ID=pandora-workspace` matches the Workspace service's `container_name` in `docker-compose.yml`.
+- **`workspace-mcp` can't `docker exec` into `axle-workspace`** — confirm the socket bind mount (`docker inspect axle-workspace-mcp` → `Mounts`) and that `WORKSPACE_CONTAINER_ID=axle-workspace` matches the Workspace service's `container_name` in `docker-compose.yml`.
 - **Chat UI shows 403 even with the token** — the token in the printed URL must match `CHAT_MCP_TOKEN` if you pinned one in `.env`; if you didn't, use the one Chat MCP generated and printed, not a stale one from a previous run.
 - **`generate_str` errors out** — check `ANTHROPIC_API_KEY` is set and valid; the Orchestrator's try/except (see `orchestrator/src/orchestrator/main.py`) should relay the error text into the chat instead of crashing, which is itself worth confirming. Confirmed in practice: without a valid key, chat doesn't function — `ANTHROPIC_API_KEY` is a hard requirement, not optional.
-- **`docker logs pandora-workspace` shows nothing** — expected, not a failure. `docker exec` output never lands in the target container's own log stream; check `docker compose logs workspace-mcp` instead for the `[workspace-mcp] exec exit=<code>: <command>` audit lines.
+- **`docker logs axle-workspace` shows nothing** — expected, not a failure. `docker exec` output never lands in the target container's own log stream; check `docker compose logs workspace-mcp` instead for the `[workspace-mcp] exec exit=<code>: <command>` audit lines.
 
 ## Definition of done
 

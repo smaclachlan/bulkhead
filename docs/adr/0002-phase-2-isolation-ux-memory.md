@@ -51,7 +51,7 @@ Workspace migration itself is proven in production use, not bundled into the
 same change. Chat MCP and the Orchestrator run no untrusted input through a
 shell at all and are not Kata candidates in phase 2.
 
-This requires KVM on the host; if Pandora ever runs nested (a cloud dev box,
+This requires KVM on the host; if Axle ever runs nested (a cloud dev box,
 CI), nested virtualization must be enabled — a deployment constraint to
 surface in the repo's setup docs, not just this ADR.
 
@@ -90,7 +90,7 @@ file on a named volume, attached to the LLM as a second server
 This is called out as its own decision, not folded into "add a container,"
 for two reasons:
 
-- **Topology**: it's Pandora's first Node/TypeScript container (Dockerfile +
+- **Topology**: it's Axle's first Node/TypeScript container (Dockerfile +
   `package.json`, same per-image pattern as ADR-0001 §3's Python
   containers, different runtime). Network shape matches Chat MCP's:
   internal-only, reachable from the Orchestrator alone, no internet egress,
@@ -152,7 +152,7 @@ merged:
   - Send a chat message and assert the UI shows `received` → `working` →
     `done` (or `error` on an induced failure, e.g. a bad LLM credential) in
     order, not just that the final state eventually appears.
-  - CLI client (`pandora-chat send "..." --wait`) round-trips a message
+  - CLI client (`axle-chat send "..." --wait`) round-trips a message
     against the same REST surface the browser uses, confirmed against a live
     stack.
 - **Isolation via Kata** (Decision 1):

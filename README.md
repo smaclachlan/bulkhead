@@ -1,4 +1,9 @@
-# Pandora - Sandbox Environment for keeping your Agents in the box.
+# Axle - Sandbox Environment for keeping your Agents in the box.
+
+Axle is the strong, secure, load-bearing core that keeps your AI agents
+moving - a fixed, trusted hub that lets disposable workspace containers
+rotate on and off around it, without ever letting the agent itself bear
+the weight of host access it shouldn't have.
 
 # Outline
 This is intended to be a multi platform, multi agent capable sandbox environment that is pedantic about ensuring agents can not escape their sandbox environment and run dissallowed commands on the local system, whilst still allowing them to progress with their intended task in an un-hindered way. 
@@ -79,11 +84,11 @@ It installs Docker (`docker.io` + the compose plugin) if missing, downloads and 
 
 Once that script passes, set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
 
-If Pandora itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.
+If Axle itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.
 
 ### Validating it end-to-end
 
 - `docker info | grep -A5 Runtimes` should list `kata` alongside `runc`.
-- `docker inspect pandora-workspace --format '{{.HostConfig.Runtime}}'` → `kata`.
+- `docker inspect axle-workspace --format '{{.HostConfig.Runtime}}'` → `kata`.
 - With `WORKSPACE_RUNTIME=kata` set in the environment, `sh scripts/validate-phase2.sh` runs its step 8 Kata check automatically instead of skipping it (see `docs/plans/phase-2-validation.md`).
-- The same kernel-differential check `setup-kata-host.sh` ran against a bare `docker run`, but *through Pandora* this time: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.
+- The same kernel-differential check `setup-kata-host.sh` ran against a bare `docker run`, but *through Axle* this time: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.

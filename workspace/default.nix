@@ -5,7 +5,7 @@
 # docs/adr/0001-phase-1-four-container-architecture.md and
 # docs/plans/phase-1-implementation-plan.md (Milestone 1).
 dockerTools.buildLayeredImage {
-  name = "pandora-workspace";
+  name = "axle-workspace";
   tag = "dev";
 
   contents = [ coreutils bashInteractive ];

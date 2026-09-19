@@ -41,7 +41,7 @@ four-container Compose topology rather than replacing it.
   configured to register `kata` as a runtime (`/etc/docker/daemon.json`
   `runtimes` block) and each Compose service opting in via
   `runtime: kata`. Requires hardware virtualization (KVM) on the host - if
-  Pandora itself ever runs inside a VM (cloud dev box, CI), nested
+  Axle itself ever runs inside a VM (cloud dev box, CI), nested
   virtualization needs to be enabled, which is a real deployment
   constraint worth surfacing early.
 - **Rollout order - recommend Workspace first, not all four at once**:
@@ -107,7 +107,7 @@ new network path, no change to any containment boundary.
   test scripts) that polls `/api/messages?since=N` and posts to
   `/api/send`, mirroring `index.html`'s JS logic in a terminal. Two modes:
   - REPL: persistent terminal chat, analogous to the browser tab.
-  - One-shot: `pandora-chat send "message" --wait` for scripting/piping.
+  - One-shot: `axle-chat send "message" --wait` for scripting/piping.
 - Exposed as a flake app (`nix run .#chat -- <token>` or reading
   `CHAT_MCP_TOKEN`/a printed URL from `.env`), matching the existing
   `apps.up` / `apps.build-*` pattern rather than a hand-run script.
@@ -124,7 +124,7 @@ a JSON file, Node/TypeScript, configured via `MEMORY_FILE_PATH`.
 This is a bigger decision than it looks, for two reasons worth calling out
 explicitly rather than glossing over:
 
-- **It's a fifth container** and Pandora's first Node-based one (the other
+- **It's a fifth container** and Axle's first Node-based one (the other
   three Python services are Dockerfile + `requirements.txt`; this would be
   Dockerfile + `package.json`, same per-image pattern as ADR-0001 §3, just
   a different runtime). Network shape matches Chat MCP's, not Workspace
@@ -223,9 +223,9 @@ open until they block something concrete:
   retrofitted in front of Chat MCP too.
 - CLI client: ship inside `chat-mcp/` (simplest - it's a client of that
   service's own API) or as a genuinely separate top-level component if it
-  grows scope later (e.g. talking to multiple Pandora instances).
+  grows scope later (e.g. talking to multiple Axle instances).
 - Memory MCP's volume/backup story - a knowledge graph that's useful is
-  also the first piece of Pandora state worth *not* losing on a container
+  also the first piece of Axle state worth *not* losing on a container
   recreate; not decided whether that's a bind mount, a named volume, or
   something the Chat/Git-egress-style human-approval pattern should touch
   later (e.g. reviewing what's in memory).

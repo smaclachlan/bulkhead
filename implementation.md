@@ -1,4 +1,4 @@
-# Pandora - Implementation Details (v1 Milestone)
+# Axle - Implementation Details (v1 Milestone)
 
 # Scope
 This document scopes the first buildable milestone against the design intent in README.md: prove the Orchestrator -> Workspace MCP -> Workspace exec path, plus a basic human chat surface, before any other MCP servers (web search, Git egress, artifact egress) are added. Limited to four containers:

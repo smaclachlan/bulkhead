@@ -56,7 +56,7 @@ abort() {
 }
 
 if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
-  abort "run this from the pandora repo root"
+  abort "run this from the axle repo root"
 fi
 
 command -v docker >/dev/null 2>&1 || abort "docker not found on PATH"
@@ -221,7 +221,7 @@ echo "== Step 4: CLI client round-trip (phase-2-scope.md item 3) =="
 if [ -z "${token:-}" ]; then
   record step4.cli-roundtrip fail "skipped - no chat-mcp token"
 else
-  cli_marker="pandora-cli-check-$(date +%s)"
+  cli_marker="axle-cli-check-$(date +%s)"
   cli_reply="$(CHAT_MCP_TOKEN="$token" CHAT_UI_URL="http://localhost:8787" \
     python3 chat-mcp/src/chat_mcp/cli.py send \
     "Reply with exactly this text and nothing else: ${cli_marker}" --wait --timeout 60 2>&1)"
@@ -242,7 +242,7 @@ if [ -z "${token:-}" ]; then
   record step5.tool-use-through-proxy fail "skipped - no chat-mcp token"
 else
   run_id="$(date +%s)"
-  content="pandora-proxy-check-${run_id}"
+  content="axle-proxy-check-${run_id}"
   prompt="Run this exact shell command and show me the output: echo ${content}"
   send_code="$(curl -s -o /dev/null -w '%{http_code}' \
     -X POST "http://localhost:8787/api/send?token=${token}" \
@@ -278,7 +278,7 @@ fi
 echo
 echo "== Step 6: memory-mcp persistence across a container restart (ADR-0002 Decision 4) =="
 
-memory_marker="pandora-memory-check-$(date +%s)"
+memory_marker="axle-memory-check-$(date +%s)"
 
 mcp_client_common='
 import asyncio, json, sys
@@ -367,7 +367,7 @@ echo "== Step 7: memory recall across a fresh Orchestrator session (ADR-0002 Dec
 if [ -z "${token:-}" ]; then
   record step7.cross-session-recall fail "skipped - no chat-mcp token"
 else
-  session_marker="pandora-session-marker-$(date +%s)"
+  session_marker="axle-session-marker-$(date +%s)"
   remember_prompt="Please remember this for later, using your memory tools: my validation marker for today is ${session_marker}. Just confirm you've stored it, briefly."
 
   # A reply containing the marker isn't proof anything was actually
@@ -450,11 +450,11 @@ echo "== Step 8: Kata runtime (ADR-0002 Decision 1, opt-in) =="
 if [ "${WORKSPACE_RUNTIME:-runc}" != "kata" ]; then
   skip step8.kata-runtime "Kata runtime check (WORKSPACE_RUNTIME != kata - expected on a checkout without Kata installed)"
 else
-  runtime="$(docker inspect pandora-workspace --format '{{.HostConfig.Runtime}}' 2>/dev/null)"
+  runtime="$(docker inspect axle-workspace --format '{{.HostConfig.Runtime}}' 2>/dev/null)"
   if [ "$runtime" = "kata" ]; then
-    record step8.kata-runtime pass "pandora-workspace's runtime is 'kata'"
+    record step8.kata-runtime pass "axle-workspace's runtime is 'kata'"
   else
-    record step8.kata-runtime fail "pandora-workspace's runtime is 'kata'" "got '$runtime'"
+    record step8.kata-runtime fail "axle-workspace's runtime is 'kata'" "got '$runtime'"
   fi
 fi
 

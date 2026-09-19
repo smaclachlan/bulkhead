@@ -139,7 +139,7 @@ def cmd_repl(args: argparse.Namespace, base: str, token: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="pandora-chat")
+    parser = argparse.ArgumentParser(prog="axle-chat")
     parser.add_argument("--url", default=os.environ.get("CHAT_UI_URL", "http://localhost:8787"))
     parser.add_argument("--token", default=os.environ.get("CHAT_MCP_TOKEN", ""))
     sub = parser.add_subparsers(dest="command")
