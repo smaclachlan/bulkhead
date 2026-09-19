@@ -28,4 +28,8 @@ VOLUME ["/data"]
 
 EXPOSE 8803
 
-CMD ["sh", "-c", "node_modules/.bin/supergateway --stdio 'node_modules/.bin/mcp-server-memory' --outputTransport streamableHttp --port ${MEMORY_MCP_PORT}"]
+# --stateful: default (stateless) mode spawns a new child per request and
+# never reaps it (supergateway issue #108) - leaked processes eventually
+# stop the container accepting connections. Stays on 3.4.3 rather than
+# upgrading since 4.0.0-rc.2 regressed --stateful itself (issue #216).
+CMD ["sh", "-c", "node_modules/.bin/supergateway --stdio 'node_modules/.bin/mcp-server-memory' --outputTransport streamableHttp --stateful --port ${MEMORY_MCP_PORT}"]
