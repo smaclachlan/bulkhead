@@ -1,0 +1,110 @@
+{
+  "phase": "phase-2",
+  "timestamp_utc": "2026-09-19T14-23-27Z",
+  "git_commit": "38fece06e263954050e8ada18aaae4989cd8eaf6",
+  "git_dirty": false,
+  "checks": [
+    {
+      "id": "step1.all-running",
+      "status": "pass",
+      "description": "all six containers running",
+      "detail": "6/6 running"
+    },
+    {
+      "id": "step2.memory-mcp-no-egress",
+      "status": "pass",
+      "description": "memory-mcp has no internet egress",
+      "detail": ""
+    },
+    {
+      "id": "step2.docker-socket-proxy-no-egress",
+      "status": "pass",
+      "description": "docker-socket-proxy has no internet egress",
+      "detail": ""
+    },
+    {
+      "id": "step2.orchestrator-cannot-reach-proxy",
+      "status": "pass",
+      "description": "orchestrator cannot reach docker-socket-proxy directly",
+      "detail": "unreachable: [Errno -2] Name or service not known"
+    },
+    {
+      "id": "step2.chat-cannot-reach-memory",
+      "status": "pass",
+      "description": "chat-mcp cannot reach memory-mcp",
+      "detail": "unreachable: [Errno -2] Name or service not known"
+    },
+    {
+      "id": "step2.workspace-mcp-cannot-reach-memory",
+      "status": "pass",
+      "description": "workspace-mcp cannot reach memory-mcp",
+      "detail": "unreachable: [Errno -3] Temporary failure in name resolution"
+    },
+    {
+      "id": "token.found",
+      "status": "pass",
+      "description": "found chat-mcp token in logs",
+      "detail": ""
+    },
+    {
+      "id": "step3.presence-advances",
+      "status": "pass",
+      "description": "last_seen advances between polls",
+      "detail": "1789827642.1771789 -> 1789827702.1910763"
+    },
+    {
+      "id": "step3.activity-sequence",
+      "status": "pass",
+      "description": "status passed through working -> done/error in order",
+      "detail": "working,done"
+    },
+    {
+      "id": "step4.cli-roundtrip",
+      "status": "pass",
+      "description": "chat_mcp.cli send --wait round-tripped a real reply",
+      "detail": "pandora-cli-check-1789827707"
+    },
+    {
+      "id": "step5.tool-use-through-proxy",
+      "status": "pass",
+      "description": "real exec via docker-socket-proxy reflected in reply",
+      "detail": "reply contained 'pandora-proxy-check-1789827709'"
+    },
+    {
+      "id": "step6.memory-write",
+      "status": "pass",
+      "description": "wrote a marker entity into memory-mcp",
+      "detail": ""
+    },
+    {
+      "id": "step6.memory-survives-restart",
+      "status": "pass",
+      "description": "marker entity survived a memory-mcp container restart",
+      "detail": "{\"text\": \"{\\n  \\\"entities\\\": [\\n    {\\n      \\\"name\\\": \\\"pandora-memory-check-1789827713\\\",\\n      \\\"entityType\\\": \\\"validation-check\\\",\\n      \\\"observations\\\": [\\n        \\\"written by scripts/validate-phase2.sh\\\"\\n      ]\\n    }\\n  ],\\n  \\\"relations\\\": []\\n}\"}"
+    },
+    {
+      "id": "step7.cross-session-recall",
+      "status": "fail",
+      "description": "a fresh orchestrator process recalled the marker via memory_* tools",
+      "detail": "no matching reply seen within 60s after restart"
+    },
+    {
+      "id": "step8.kata-runtime",
+      "status": "skip",
+      "description": "Kata runtime check (WORKSPACE_RUNTIME != kata - expected on a checkout without Kata installed)",
+      "detail": ""
+    },
+    {
+      "id": "step9.mcp-allowlist",
+      "status": "pass",
+      "description": "workspace-mcp/memory-mcp tool surfaces match the allowlist",
+      "detail": "[PASS] workspace-mcp exposes exactly ['exec'] | [PASS] memory-mcp exposes exactly ['add_observations', 'create_entities', 'create_relations', 'delete_entities', 'delete_observations', 'delete_relations', 'open_nodes', 'read_graph', 'search_nodes']"
+    }
+  ],
+  "summary": {
+    "pass": 14,
+    "fail": 1,
+    "skip": 1,
+    "total": 16
+  }
+}
