@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pandora Chat</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  #log { border: 1px solid #ccc; border-radius: 6px; height: 60vh; overflow-y: auto; padding: 0.75rem; margin-bottom: 0.75rem; }
+  .msg { margin: 0.4rem 0; white-space: pre-wrap; }
+  .msg.user { text-align: right; }
+  .msg .bubble { display: inline-block; padding: 0.4rem 0.7rem; border-radius: 8px; max-width: 80%; }
+  .msg.user .bubble { background: #d6e8ff; }
+  .msg.assistant .bubble { background: #eee; }
+  form { display: flex; gap: 0.5rem; }
+  input[type=text] { flex: 1; padding: 0.5rem; }
+  #status { color: #a00; font-size: 0.85rem; margin-bottom: 0.5rem; min-height: 1em; }
+</style>
+</head>
+<body>
+<h3>Pandora - Agent Chat</h3>
+<div id="status"></div>
+<div id="log"></div>
+<form id="send-form">
+  <input type="text" id="text" autocomplete="off" placeholder="Message the agent..." />
+  <button type="submit">Send</button>
+</form>
+
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get("token") || "";
+let since = 0;
+
+function withToken(url) {
+  const u = new URL(url, location.href);
+  u.searchParams.set("token", token);
+  return u.toString();
+}
+
+function renderMessage(m) {
+  const log = document.getElementById("log");
+  const div = document.createElement("div");
+  div.className = "msg " + m.role;
+  const bubble = document.createElement("span");
+  bubble.className = "bubble";
+  bubble.textContent = m.text;
+  div.appendChild(bubble);
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function poll() {
+  try {
+    const res = await fetch(withToken(`/api/messages?since=${since}`));
+    if (!res.ok) {
+      document.getElementById("status").textContent = `error polling: ${res.status}`;
+      return;
+    }
+    document.getElementById("status").textContent = "";
+    const data = await res.json();
+    for (const m of data.messages) {
+      renderMessage(m);
+      since = Math.max(since, m.id);
+    }
+  } catch (e) {
+    document.getElementById("status").textContent = `error polling: ${e}`;
+  }
+}
+
+document.getElementById("send-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("text");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  await fetch(withToken("/api/send"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  await poll();
+});
+
+setInterval(poll, 1000);
+poll();
+</script>
+</body>
+</html>

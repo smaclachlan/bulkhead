@@ -73,12 +73,13 @@ Verified in this session with a stubbed `docker` binary (argv construction, time
 
 **Goal:** a local chat surface, independently testable without the Orchestrator.
 
-- [ ] Bound to `127.0.0.1`, small HTTP/WebSocket endpoint per ADR-0001 §6.
-- [ ] Token generated at container start; required on the endpoint.
-- [ ] `chat_send(message: string)` tool for the Orchestrator side, plus a receive mechanism (poll or push) for messages the human sends in.
-- [ ] Minimal web UI (a single HTML page is enough for phase 1) that hits the same endpoint.
+- [x] Small HTTP endpoint (Starlette/uvicorn) per ADR-0001 §6; container listens on `0.0.0.0` internally so Compose can publish it as `127.0.0.1:<port>:<port>` in Milestone 5 (host-only exposure is a Compose port-mapping concern, not something the process itself can enforce).
+- [x] Token generated at container start (or pinned via `CHAT_MCP_TOKEN`); required via `TokenAuthMiddleware` on every endpoint including `/`.
+- [x] `chat_send(message: string)` tool for the Orchestrator side, plus `chat_receive(timeout_seconds)` (poll-with-timeout) for messages the human sends in - both in `chat-mcp/src/chat_mcp/server.py`.
+- [x] Minimal single-page web UI (`chat-mcp/src/chat_mcp/static/index.html`) that 1s-polls `/api/messages` and posts to `/api/send`.
 
 **Definition of done:** starting the container prints a URL with the token in it; opening it in a browser shows a chat box; a message typed there is retrievable via the MCP-facing receive call (test with a stub script, since the Orchestrator isn't wired yet).
+Verified in this session: ran the real server locally (Python available, no Docker needed for this), confirmed the web API (403 without token, send/poll round-trip) with `urllib`, and confirmed `chat_send`/`chat_receive` over real MCP streamable-HTTP transport with the `mcp` SDK's own client — a message posted via the web API was retrieved by `chat_receive`, and a reply sent via `chat_send` appeared in `/api/messages`. Container build itself (Dockerfile) needs `docker build` on a machine with Docker.
 
 ---
 
