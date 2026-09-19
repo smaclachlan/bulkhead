@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <title>Bulkhead Chat</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
-  #log { border: 1px solid #ccc; border-radius: 6px; height: 60vh; overflow-y: auto; padding: 0.75rem; margin-bottom: 0.75rem; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, sans-serif; box-sizing: border-box; padding: 1rem; display: flex; flex-direction: column; }
+  h3 { margin: 0 0 0.5rem; flex: none; }
+  #presence, #status { flex: none; }
+  #log { flex: 1 1 auto; min-height: 0; border: 1px solid #ccc; border-radius: 6px; overflow-y: auto; padding: 0.75rem; margin-bottom: 0.75rem; }
   .msg { margin: 0.4rem 0; white-space: pre-wrap; }
   .msg.user { text-align: right; }
   .msg .bubble { display: inline-block; padding: 0.4rem 0.7rem; border-radius: 8px; max-width: 80%; }
