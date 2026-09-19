@@ -10,15 +10,24 @@
 #   - workspace: no network at all (README point 4).
 #   - internal:  an `internal: true` network with no route to the outside
 #     world - workspace-mcp and chat-mcp live here, reachable only from
-#     the orchestrator (and, for chat-mcp's UI, the host loopback via the
-#     one published port below).
+#     the orchestrator.
 #   - egress:    normal outbound network, attached only to orchestrator,
 #     for the LLM provider's API/auth endpoints.
+#   - chat-ui:   a second network for chat-mcp only, used solely to publish
+#     its UI port to the host loopback. It is NOT marked `internal: true`
+#     because Docker silently fails to wire up published ports for a
+#     container whose only network is internal (confirmed: `docker port`
+#     reports the mapping but nothing actually listens on the host).
+#     Masquerade is disabled instead, so chat-mcp still has no route to
+#     the outside world - only to the host via the published port.
 
 networks:
   internal:
     internal: true
   egress: {}
+  chat-ui:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 services:
   workspace:
@@ -42,7 +51,7 @@ services:
 
   chat-mcp:
     image: pandora-chat-mcp:dev
-    networks: [internal]
+    networks: [internal, chat-ui]
     environment:
       - CHAT_MCP_TOKEN=${CHAT_MCP_TOKEN:-}
     ports:
