@@ -57,18 +57,29 @@ see `validation-results/README.md` for the record shape.
 
 ## Manual-only checks (not automated - see rationale)
 
-- **Kata runtime actually took effect** (ADR-0002 Decision 1): on a host
-  with Kata installed and `WORKSPACE_RUNTIME=kata` set,
+- **Kata runtime actually took effect** (ADR-0002 Decision 1):
   `docker inspect bulkhead-workspace --format '{{.HostConfig.Runtime}}'` →
-  `kata`, not `runc`. Skipped by the automated harness unless
-  `WORKSPACE_RUNTIME=kata` is set in the environment it runs in - most
-  checkouts won't have Kata installed, and the point of the env-var default
-  (see `.env.example`) is that they don't need to.
+  `kata`, not `runc` (`step8.kata-runtime`), and a `containerd-shim-kata-v2`
+  process is actually running for that container's ID
+  (`step8.kata-shim-process`) - the label alone only proves Docker was
+  *told* to use Kata, not that a real shim/VMM ever came up for it. Both
+  checks query `bulkhead-workspace`'s actual runtime via `docker inspect`,
+  not the `WORKSPACE_RUNTIME` env var - that var only controls what
+  `docker compose up` requests at container-creation time (Compose reads
+  it from `.env` itself), so it has no bearing on what an already-running
+  container was actually created with, and the harness doesn't need it
+  exported into its own shell to check reality. Both checks skip (rather
+  than fail) when the container's actual runtime isn't `kata` - the normal
+  case on a checkout without Kata installed, per `.env.example`'s
+  `runc` default.
 - **Positive Kata isolation probe**: with Kata active, `workspace_exec`'s
   `uname -r` should differ from the host's `uname -r` - direct evidence of
-  a separate guest kernel, not just a relabeled `runc` container. Manual
-  because it requires comparing against the *host's* kernel version, which
-  the containerized harness has no reliable way to read.
+  a separate guest kernel, not just a relabeled `runc` container backed by
+  a shim process that isn't really doing anything. Manual because it
+  requires comparing against the *host's* kernel version, which the
+  containerized harness has no reliable way to read. This is the only
+  Kata check still genuinely manual - the runtime label and shim-process
+  checks above are both now automated.
 - **Presence flips to stale** (ADR-0002 Decision 2): `docker compose stop
   orchestrator`, wait past `stale_after_seconds` (default 60s, see
   `CHAT_STATUS_STALE_SECONDS`), confirm `/api/status`-derived UI shows
