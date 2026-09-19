@@ -10,6 +10,7 @@ target container is fixed by configuration (WORKSPACE_CONTAINER_ID) - the
 caller cannot select a different container.
 """
 
+import asyncio
 import os
 import subprocess
 
@@ -30,7 +31,7 @@ def _decode(output: "str | bytes | None") -> str:
 
 
 @mcp.tool(name="exec")
-def exec_command(command: str) -> dict:
+async def exec_command(command: str) -> dict:
     """Run a shell command inside the sandboxed Workspace container.
 
     The Workspace container is fully network-isolated (README point 4); this
@@ -40,7 +41,10 @@ def exec_command(command: str) -> dict:
     """
     argv = ["docker", "exec", WORKSPACE_CONTAINER_ID, "sh", "-c", command]
     try:
-        result = subprocess.run(
+        # Offloaded to a thread so one slow/hung command can't stall the
+        # whole server's event loop (confirmed live: it previously did).
+        result = await asyncio.to_thread(
+            subprocess.run,
             argv,
             capture_output=True,
             text=True,
