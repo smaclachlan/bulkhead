@@ -310,8 +310,16 @@ print(max((m['id'] for m in data.get('messages', [])), default=0))
     send_chat "Using workspace_exec, write the text hello-from-validate-phase3 into a new file at /repo/${git_marker}.txt. Then call git_commit with the commit message 'validate-phase3: ${git_marker}'. Briefly confirm when done."
     wait_for_reply "$since" "${git_marker}" 40 >/dev/null
 
+    # 60 tries * 2s = up to 120s here, on top of wait_for_reply's own 80s
+    # above (whose result is discarded but which still consumes wall time
+    # first) - confirmed live that the write-file-then-git_commit round
+    # trip through a real chat/LLM turn can genuinely take longer than this
+    # combined ~120s used to allow: two consecutive validate-phase3.sh runs
+    # each recorded the marker commit as landing (visible in the *next*
+    # run's `git log`), just after their own budget had already given up
+    # and recorded a fail.
     log_output=""
-    for _ in $(seq 1 20); do
+    for _ in $(seq 1 60); do
       sleep 2
       log_output="$(docker compose exec -T git-mcp git -C /repo log --oneline -n 20 2>&1)"
       printf '%s' "$log_output" | grep -q "$git_marker" && break
