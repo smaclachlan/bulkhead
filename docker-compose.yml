@@ -118,13 +118,24 @@ services:
   # everything else (IMAGES, NETWORKS, VOLUMES, POST-to-create-containers,
   # etc.) is off by default in tecnativa/docker-socket-proxy. This is now
   # the *only* container with the socket bind mount.
-  # Custom nginx-based filtering proxy (docker-socket-proxy/) - replaced
-  # tecnativa/docker-socket-proxy because that image can only gate whole API
-  # categories (CONTAINERS/EXEC/POST) on or off, with no way to restrict
-  # *which* container EXEC is allowed against. See README's "Docker socket
-  # proxy" section for the full reasoning.
+  #
+  # Known, accepted gap: this image only gates whole API categories on or
+  # off - there's no way to restrict *which* container EXEC is allowed
+  # against, so a fully-compromised workspace-mcp could exec into any
+  # container on the host, not just `workspace`. A custom nginx-based
+  # replacement was tried (path-matching scoped to one container name) and
+  # reverted - nginx's HTTP proxy module doesn't reliably relay Docker's
+  # exec/attach hijack protocol (a raw stream after an HTTP upgrade) over a
+  # unix-socket upstream; several standard fixes (socket permissions,
+  # allowing /_ping, upgrade headers, disabling chunked encoding) were each
+  # individually necessary but never collectively sufficient to get output
+  # through. The correct way to get real per-container restriction is a
+  # Docker Authorization Plugin (daemon-level, gates the request without
+  # sitting in the hijacked stream's data path at all) or a purpose-built
+  # raw-relay filter (peek at the request line once, then dumb-forward
+  # bytes) - both are real, separately-scoped follow-ups, not done here.
   docker-socket-proxy:
-    image: bulkhead-docker-socket-proxy:dev
+    image: tecnativa/docker-socket-proxy:latest
     # No container_name override (unlike `workspace`) - nothing references
     # this one by a fixed literal name (workspace-mcp reaches it by service
     # name, `docker-socket-proxy`, over internal-docker-proxy, which Compose
@@ -135,11 +146,9 @@ services:
     # internal-docker-proxy comment above.
     networks: [internal-docker-proxy]
     environment:
-      # Must always equal workspace's own container_name (both ultimately
-      # come from the same WORKSPACE_CONTAINER_NAME the `up` script
-      # computes) - this is the one value the proxy's nginx config pins
-      # EXEC/json access to.
-      - WORKSPACE_CONTAINER_NAME=${WORKSPACE_CONTAINER_NAME:-bulkhead-workspace}
+      - CONTAINERS=1
+      - EXEC=1
+      - POST=1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: on-failure

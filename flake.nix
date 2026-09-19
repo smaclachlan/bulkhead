@@ -57,7 +57,6 @@
           build-orchestrator-image = dockerBuildApp "orchestrator" "orchestrator" "bulkhead-orchestrator:dev";
           build-memory-mcp-image = dockerBuildApp "memory-mcp" "memory-mcp" "bulkhead-memory-mcp:dev";
           build-git-mcp-image = dockerBuildApp "git-mcp" "git-mcp" "bulkhead-git-mcp:dev";
-          build-docker-socket-proxy-image = dockerBuildApp "docker-socket-proxy" "docker-socket-proxy" "bulkhead-docker-socket-proxy:dev";
 
           # Terminal client for Chat MCP's REST API (docs/adr/0002-phase-2-isolation-ux-memory.md,
           # phase-2-scope.md item 3) - a third consumer of the same
@@ -172,13 +171,12 @@
                 rm -f "$result_link"
               fi
 
-              echo "== Building workspace-mcp, chat-mcp, orchestrator, memory-mcp, git-mcp, docker-socket-proxy images via Docker ==" >&2
+              echo "== Building workspace-mcp, chat-mcp, orchestrator, memory-mcp, git-mcp images via Docker ==" >&2
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-workspace-mcp:dev workspace-mcp
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-chat-mcp:dev chat-mcp
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-orchestrator:dev orchestrator
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-memory-mcp:dev memory-mcp
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-git-mcp:dev git-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-docker-socket-proxy:dev docker-socket-proxy
 
               echo "== Starting docker compose (detached) ==" >&2
               dc up -d

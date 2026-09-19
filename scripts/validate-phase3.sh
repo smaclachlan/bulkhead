@@ -404,7 +404,16 @@ asyncio.run(main())
   }
 
   ls_remote() {
-    docker compose exec -T git-mcp git -C /repo ls-remote origin "refs/heads/$1" 2>&1
+    # Keep 2>&1 (not 2>/dev/null) so a genuine ssh/auth failure still shows
+    # up in this output for debugging - but filter out the one-time
+    # "Warning: Permanently added ... to the list of known hosts." line a
+    # fresh git-mcp container prints to stderr on its *first* connection to
+    # the remote (StrictHostKeyChecking=accept-new). Confirmed live: with
+    # 2>&1 unfiltered, that single benign line made the very first
+    # ls_remote call of a run look non-empty - i.e. "branch already exists"
+    # - even though the actual ls-remote output (and the branch) was empty.
+    docker compose exec -T git-mcp git -C /repo ls-remote origin "refs/heads/$1" 2>&1 \
+      | grep -v '^Warning: Permanently added .* to the list of known hosts\.$'
   }
 
   deny_branch="agent/bulkhead-validate-deny-$(date +%s)"
