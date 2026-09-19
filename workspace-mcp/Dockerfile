@@ -1,7 +1,10 @@
-# Workspace MCP: the sole privileged container. Holds the Docker socket
-# (bind-mounted at run time, not baked in here) and exposes exactly one
-# tool - see src/workspace_mcp/server.py and
-# docs/adr/0001-phase-1-four-container-architecture.md.
+# Workspace MCP: the sole privileged container, exposing exactly one tool -
+# see src/workspace_mcp/server.py and
+# docs/adr/0001-phase-1-four-container-architecture.md. As of phase 2
+# (docs/adr/0002-phase-2-isolation-ux-memory.md §3), the raw Docker socket
+# is no longer bind-mounted here directly - `docker-socket-proxy` holds it
+# instead, and this container's `docker` CLI talks to that scoped proxy
+# over the network via DOCKER_HOST (see docker-compose.yml).
 #
 # Built via `nix run .#build-workspace-mcp-image` (see flake.nix / ADR-0001 §3
 # for why this stays a plain Dockerfile instead of a pure Nix derivation).
