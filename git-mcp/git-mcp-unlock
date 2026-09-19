@@ -12,27 +12,34 @@
 # Never persisted: nothing here writes the passphrase or the decrypted key
 # to disk - a git-mcp restart drops it and this has to be run again.
 #
-# Self-skips whenever there's nothing to unlock (unconfigured, already
-# cloned, or the key has no passphrase at all) so `nix run .#up` can call
-# this unconditionally after every start without ever prompting someone who
-# doesn't need it - see flake.nix's `up` app.
+# Self-skips whenever there's nothing to unlock (unconfigured, the agent
+# already has an identity loaded, or the key has no passphrase at all) so
+# `nix run .#up` can call this unconditionally after every start without
+# ever prompting someone who doesn't need it - see flake.nix's `up` app.
 set -eu
 
 SOCK="/tmp/git-mcp-agent.sock"
 KEY="/tmp/git-mcp-deploy-key"
-REPO_PATH="${GIT_REPO_PATH:-/repo}"
 
 if [ -z "${GIT_REMOTE_URL:-}" ]; then
   echo "git-mcp is unconfigured (GIT_REMOTE_URL unset) - nothing to unlock" >&2
   exit 0
 fi
-if [ -d "$REPO_PATH/.git" ]; then
-  echo "git-mcp already has a working checkout - no unlock needed" >&2
-  exit 0
-fi
 if [ ! -S "$SOCK" ]; then
   echo "git-mcp's ssh-agent socket ($SOCK) isn't there - is git-mcp running?" >&2
   exit 1
+fi
+export SSH_AUTH_SOCK="$SOCK"
+if ssh-add -l >/dev/null 2>&1; then
+  # NOT the same question as "is /repo already cloned?" - the working tree
+  # lives in a named volume and survives a git-mcp restart, but this
+  # in-container agent is memory-only and does not (confirmed live: this
+  # script used to check for an existing checkout instead, which meant it
+  # silently skipped unlocking on every restart after the first, since the
+  # already-cloned repo made it look like there was nothing to do while the
+  # fresh agent underneath was actually empty).
+  echo "agent already has an identity loaded - nothing to unlock" >&2
+  exit 0
 fi
 if [ ! -f "$KEY" ]; then
   echo "no deploy key mounted (GIT_SSH_DEPLOY_KEY_HOST_PATH unset, or not" \
@@ -47,8 +54,6 @@ if ssh-keygen -y -P '' -f "$KEY" >/dev/null 2>&1; then
        "'docker compose logs git-mcp' for the actual clone failure)" >&2
   exit 0
 fi
-
-export SSH_AUTH_SOCK="$SOCK"
 
 stty -echo
 printf "Deploy key passphrase: "
