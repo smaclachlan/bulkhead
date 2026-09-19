@@ -109,8 +109,73 @@
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-memory-mcp:dev memory-mcp
               ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-git-mcp:dev git-mcp
 
-              echo "== Starting docker compose ==" >&2
-              exec ${pkgs.docker-compose}/bin/docker-compose up
+              echo "== Starting docker compose (detached) ==" >&2
+              ${pkgs.docker-compose}/bin/docker-compose up -d
+
+              # git-mcp-unlock self-skips when there's nothing to unlock
+              # (unconfigured / already cloned / passphrase-less key), so
+              # it's safe to always call it here rather than making that a
+              # manual step - only a real passphrase-protected key ever
+              # actually prompts. Poll briefly first since `up -d` returns
+              # as soon as containers start, not once git-mcp's own ssh-agent
+              # has finished coming up (see state.py's _start_agent).
+              echo "== Checking whether git-mcp's deploy key needs a passphrase ==" >&2
+              attempt=0
+              while ! ${pkgs.docker-compose}/bin/docker-compose exec -T git-mcp \
+                  test -S /tmp/git-mcp-agent.sock >/dev/null 2>&1; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 20 ]; then
+                  echo "git-mcp not ready yet - run 'nix run .#git-unlock' manually once it is" >&2
+                  break
+                fi
+                sleep 0.5
+              done
+              # Real pty here (no -T) so git-mcp-unlock's `stty -echo` prompt
+              # works; a failed/declined/unnecessary unlock shouldn't fail
+              # `up` itself, hence the `|| true`.
+              ${pkgs.docker-compose}/bin/docker-compose exec git-mcp git-mcp-unlock || true
+
+              echo "== Stack is up. 'docker compose logs -f <service>' to tail logs;" >&2
+              echo "   're-run nix run .#git-unlock' any time (e.g. after a git-mcp restart);" >&2
+              echo "   'nix run .#down' to stop it. ==" >&2
+            '');
+          };
+
+          # `up` now runs detached (see above), so there's no foreground
+          # process left to Ctrl+C - this is the counterpart to bring it down.
+          down = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "bulkhead-down" ''
+              set -euo pipefail
+              if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
+                echo "run this from the bulkhead repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
+                exit 1
+              fi
+              exec ${pkgs.docker-compose}/bin/docker-compose down
+            '');
+          };
+
+          # Loads a passphrase into git-mcp's own ssh-agent (see
+          # git-mcp/git-mcp-unlock and state.py's _start_agent) - needed
+          # because docker-compose.yml's git-mcp has no way to read a
+          # passphrase at cold-boot: `up`'s (now backgrounded, see above)
+          # merged multi-service log stream never wires host stdin into any
+          # one container, and forwarding a host ssh-agent socket in doesn't
+          # survive a future Kata/Apple-containerization move of git-mcp
+          # (docs/adr/0003-phase-3-git-mcp.md follow-ups) since that crosses
+          # a kernel boundary an AF_UNIX socket can't cross. `docker compose
+          # exec` opens its own independent pty to the container regardless
+          # of how `up` was started, so this works any time git-mcp is up.
+          # Usage: nix run .#git-unlock
+          git-unlock = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "bulkhead-git-unlock" ''
+              set -euo pipefail
+              if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
+                echo "run this from the bulkhead repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
+                exit 1
+              fi
+              exec ${pkgs.docker-compose}/bin/docker-compose exec git-mcp git-mcp-unlock
             '');
           };
         };
