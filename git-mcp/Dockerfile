@@ -40,6 +40,18 @@ ENV GIT_MCP_LLM_PORT=8805
 ENV GIT_MCP_ADMIN_PORT=8806
 ENV GIT_REPO_PATH=/repo
 
+# Same values state.py's _ssh_env() computes per-subprocess-call, baked in
+# as container-wide defaults too - both paths are fixed/known ahead of time
+# (AGENT_SOCK_PATH and _prepare_ssh_key's copy target in state.py). Without
+# this, only git/ssh calls made *from inside* git-mcp's own Python process
+# get a working identity - a plain `docker compose exec git-mcp git ...`
+# (an operator poking around by hand, or validate-phase3.sh's ls_remote
+# helper) would get bare ssh with no agent and no -i, and fail with
+# "Permission denied (publickey)" even though the agent is genuinely
+# unlocked and the same command would work from inside state.py.
+ENV SSH_AUTH_SOCK=/tmp/git-mcp-agent.sock
+ENV GIT_SSH_COMMAND="ssh -i /tmp/git-mcp-deploy-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
 EXPOSE 8805 8806
 
 # Identity for local commits made on the agent's behalf - not the human's own

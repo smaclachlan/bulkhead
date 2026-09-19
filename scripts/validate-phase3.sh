@@ -202,9 +202,15 @@ echo
 echo "== Step 5: push_execute/pending_push/push_cancel absent from orchestrator's LLM config (ADR-0003 Decision 3) =="
 
 config_content="$(docker compose exec -T orchestrator cat /app/mcp_agent.config.yaml 2>&1)"
+# Strip comments before matching - the file's own header comment explains
+# *why* 8806/push_execute/pending_push/push_cancel are excluded, which
+# means it contains those exact strings as prose. A raw grep across the
+# whole file (comments included) flags that explanation as if it were a
+# leak; check the functional YAML content only.
+config_active="$(printf '%s\n' "$config_content" | sed 's/#.*//')"
 
-if printf '%s' "$config_content" | grep -q '8805' \
-  && ! printf '%s' "$config_content" | grep -qE '8806|push_execute|pending_push|push_cancel'; then
+if printf '%s' "$config_active" | grep -q '8805' \
+  && ! printf '%s' "$config_active" | grep -qE '8806|push_execute|pending_push|push_cancel'; then
   record step5.admin-tools-excluded pass \
     "orchestrator's mcp_agent.config.yaml registers git-mcp's LLM port but never its admin port/tools"
 else
@@ -242,6 +248,18 @@ elif [ -z "${token:-}" ]; then
   record step9.deny-cancels-and-blocks-reapproval fail "skipped - no chat-mcp token"
   record step9.approve-pushes-to-remote fail "skipped - no chat-mcp token"
 else
+  # A passphrase-protected deploy key that hasn't been unlocked yet (see
+  # git-mcp/git-mcp-unlock/state.py's _start_agent) leaves git-mcp's repo
+  # uncloned - step7/step9 would otherwise fail deep inside a real git/ssh
+  # call with a cryptic "Permission denied (publickey)"/"Could not read
+  # from remote repository" rather than the actual, fixable cause. Check
+  # once up front and give one clear message for those instead. step8 is
+  # unaffected either way - its disallowed-branch case is rejected before
+  # ever touching git, so it always runs for real below.
+  repo_ready=false
+  docker compose exec -T git-mcp sh -c \
+    '[ -d "${GIT_REPO_PATH:-/repo}/.git" ]' >/dev/null 2>&1 && repo_ready=true
+  not_ready_msg="git-mcp's working tree isn't cloned yet - if its deploy key has a passphrase, run 'nix run .#git-unlock' (or 'nix run .#up') first, then re-run this script"
   send_chat() {
     curl -s -o /dev/null -X POST "http://localhost:8787/api/send?token=${token}" \
       -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$1")"
@@ -284,24 +302,28 @@ print(max((m['id'] for m in data.get('messages', [])), default=0))
   echo
   echo "== Step 7: local git operations through the real chat/LLM path (ADR-0003 Decision 2) =="
 
-  git_marker="bulkhead-git-check-$(date +%s)"
-  since="$(last_id)"
-  send_chat "Using workspace_exec, write the text hello-from-validate-phase3 into a new file at /repo/${git_marker}.txt. Then call git_commit with the commit message 'validate-phase3: ${git_marker}'. Briefly confirm when done."
-  wait_for_reply "$since" "${git_marker}" 40 >/dev/null
-
-  log_output=""
-  for _ in $(seq 1 20); do
-    sleep 2
-    log_output="$(docker compose exec -T git-mcp git -C /repo log --oneline -n 20 2>&1)"
-    printf '%s' "$log_output" | grep -q "$git_marker" && break
-  done
-
-  if printf '%s' "$log_output" | grep -q "$git_marker"; then
-    record step7.local-git-ops-through-chat pass \
-      "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log" "$log_output"
+  if ! $repo_ready; then
+    record step7.local-git-ops-through-chat fail "$not_ready_msg"
   else
-    record step7.local-git-ops-through-chat fail \
-      "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log" "$log_output"
+    git_marker="bulkhead-git-check-$(date +%s)"
+    since="$(last_id)"
+    send_chat "Using workspace_exec, write the text hello-from-validate-phase3 into a new file at /repo/${git_marker}.txt. Then call git_commit with the commit message 'validate-phase3: ${git_marker}'. Briefly confirm when done."
+    wait_for_reply "$since" "${git_marker}" 40 >/dev/null
+
+    log_output=""
+    for _ in $(seq 1 20); do
+      sleep 2
+      log_output="$(docker compose exec -T git-mcp git -C /repo log --oneline -n 20 2>&1)"
+      printf '%s' "$log_output" | grep -q "$git_marker" && break
+    done
+
+    if printf '%s' "$log_output" | grep -q "$git_marker"; then
+      record step7.local-git-ops-through-chat pass \
+        "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log" "$log_output"
+    else
+      record step7.local-git-ops-through-chat fail \
+        "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log" "$log_output"
+    fi
   fi
 
   # -- Step 8: push_request against a disallowed branch is rejected -------
@@ -360,6 +382,12 @@ asyncio.run(main())
 
   echo
   echo "== Step 9: push_request / approve / deny round-trip against the real remote (ADR-0003 Decision 3) =="
+
+  if ! $repo_ready; then
+    record step9.push-not-immediate fail "$not_ready_msg"
+    record step9.deny-cancels-and-blocks-reapproval fail "$not_ready_msg"
+    record step9.approve-pushes-to-remote fail "$not_ready_msg"
+  else
 
   extract_request_id() {
     # extract_request_id <reply-text> <branch> - pulls the request_id out of
@@ -434,6 +462,7 @@ asyncio.run(main())
       record step9.approve-pushes-to-remote fail "approve actually pushes to the remote" \
         "refs/heads/${approve_branch} not found on remote after approve: $remote_after_approve"
     fi
+  fi
   fi
 fi
 
