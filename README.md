@@ -20,6 +20,7 @@ The general premise is to contain each container to bare least priviledges from 
 8) Workspace Container will either utilise:
     - Mapped in host container workspace
     - Separate workspace in the container, syncing to an external server via the Git MCP (see Egress below)
+9) All MCP ingress/egress pathways should use the narrowest possible vocabulary. Prefer closed enums or fixed templates over freeform text for any tool with an external side-effect (e.g. a status-reporting tool exposing `send_status(state: enum["received","working","done","error"])` rather than `send_message(text: string)`). This is enforced at the MCP tool schema, not by prompting the model to behave - so even an injected/compromised agent has no field to smuggle arbitrary data through. Reserve freeform text for pathways that already carry a human-approval gate (e.g. Git push).
 
 # Egress
 Point 4 covers commands going into the Workspace Sandbox. Getting data back out needs to be just as strict, and will use two controlled paths:
@@ -38,7 +39,7 @@ Not really in scope right now: protecting the Agent/harness from a malicious use
 
 # Further Threats to Consider
 Not building for these in v1, but keeping them in mind now in case they change the shape of the project:
-1) Confused deputy via approved channels - prompt injection tricking the Agent into misusing the Git MCP or artifact egress to push/exfiltrate something bad through a legitimate path. Mitigated by the Git MCP requiring human approval before an external push (see Egress above); artifact egress still needs the same treatment.
+1) Confused deputy via approved channels - prompt injection tricking the Agent into misusing the Git MCP or artifact egress to push/exfiltrate something bad through a legitimate path. This cuts both ways on bidirectional channels (e.g. a Slack MCP): the same tool that lets external content reach the Agent as commands can double as an exfiltration path if its outbound side accepts freeform text. Mitigated by the Git MCP requiring human approval before an external push (see Egress above), and by holding every MCP's outbound side to the narrowest-vocabulary principle (see cornerstone 9) so injected instructions have no freeform field to exfiltrate through; artifact egress still needs the human-approval treatment.
 2) MCP server / supply chain compromise - a "vetted" MCP server being malicious or compromised after the fact. Mitigate with pinned/signed MCP server builds and least-privilege scoping per MCP so a compromised one has a small blast radius.
 3) Orchestrator compromise - already mitigated by design, as the Orchestrator sits in its own MicroVM with no Bash/CLI access (point 1); residual risk is a logic bug in the Harness itself abusing its allowed MCP calls, which point 3's strict marshalling should catch.
 4) Resource exhaustion / cost - a runaway Agent loop hammering paid APIs or filling disk. Mitigate with rate limits/quotas enforced at the MCP/Orchestrator boundary.
