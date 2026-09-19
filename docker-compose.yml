@@ -72,7 +72,13 @@ networks:
 services:
   workspace:
     image: bulkhead-workspace:dev
-    container_name: bulkhead-workspace
+    # Templated (not a bare literal) so concurrent stacks under different
+    # profiles/projects don't collide on the same container name - flake.nix's
+    # `up` computes this from the profile file so it's stable across runs of
+    # the same profile, and matches workspace-mcp's WORKSPACE_CONTAINER_ID
+    # below by construction. Defaults to today's exact fixed name so an
+    # unprofiled `nix run .#up` (just `.env`) is unaffected.
+    container_name: ${WORKSPACE_CONTAINER_NAME:-bulkhead-workspace}
     network_mode: "none"
     # Kata Containers (ADR-0002 Decision 1): swaps the OCI runtime from
     # `runc` (shared host kernel) to a per-container microVM for the one
@@ -81,12 +87,25 @@ services:
     # still comes up - set WORKSPACE_RUNTIME=kata in .env once Kata is
     # set up on the host (see .env.example / README).
     runtime: ${WORKSPACE_RUNTIME:-runc}
+    # Forces the container to just idle, regardless of what CMD/ENTRYPOINT
+    # the image itself declares - workspace-mcp only ever `docker exec`s
+    # into this container, it never `docker run`s per command (README
+    # point 4), so whatever's actually in the image (the default minimal
+    # one, or a custom WORKSPACE_DOCKERFILE_DIR image - see README's
+    # "Workspace image" section) must not run its own entrypoint here.
+    # Requires a POSIX shell and `sleep` in the image - true of the default
+    # image and of essentially any real base distro a custom Dockerfile
+    # would use.
+    command: ["sh", "-c", "sleep infinity"]
     # Shared with git-mcp (ADR-0003 Decision 1) - the working tree git-mcp
     # clones/commits/pushes on the agent's behalf. Workspace itself still
     # has no git installed and no network - it only ever sees the files
-    # that land here via git-mcp's side of the volume.
+    # that land here via git-mcp's side of the volume. Target path must
+    # match git-mcp's own mount below (both read WORKSPACE_REPO_PATH) -
+    # override it if a custom Workspace Dockerfile's tooling expects the
+    # project root somewhere other than the /repo default.
     volumes:
-      - workspace-repo:/repo
+      - workspace-repo:${WORKSPACE_REPO_PATH:-/repo}
     restart: on-failure
 
   # Scoped Docker-socket proxy, fronting the raw socket for workspace-mcp.
@@ -101,7 +120,11 @@ services:
   # the *only* container with the socket bind mount.
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
-    container_name: bulkhead-docker-socket-proxy
+    # No container_name override (unlike `workspace`) - nothing references
+    # this one by a fixed literal name (workspace-mcp reaches it by service
+    # name, `docker-socket-proxy`, over internal-docker-proxy, which Compose
+    # resolves per-project regardless), and a fixed name here would collide
+    # across concurrent stacks the same way workspace's did.
     # Its own network, not internal-workspace - orchestrator must not be
     # able to reach this directly, only through workspace-mcp. See the
     # internal-docker-proxy comment above.
@@ -122,7 +145,9 @@ services:
     # directly, only workspace-mcp's own narrow `exec` tool.
     networks: [internal-workspace, internal-docker-proxy]
     environment:
-      - WORKSPACE_CONTAINER_ID=bulkhead-workspace
+      # Must always equal the `workspace` service's own container_name above
+      # - same variable, so they can't drift apart across profiles.
+      - WORKSPACE_CONTAINER_ID=${WORKSPACE_CONTAINER_NAME:-bulkhead-workspace}
       # No socket bind mount here any more - the `docker` CLI talks to
       # docker-socket-proxy's filtered API instead of the host daemon
       # directly. See ADR-0002 §3 above.
@@ -155,7 +180,10 @@ services:
     image: bulkhead-git-mcp:dev
     networks: [internal-git, git-egress]
     volumes:
-      - workspace-repo:/repo
+      # Target must match workspace's mount above - same named volume,
+      # same path, both driven by WORKSPACE_REPO_PATH so they can't drift
+      # apart independently.
+      - workspace-repo:${WORKSPACE_REPO_PATH:-/repo}
       # Read-only deploy key, this container only (ADR-0003 Decision 4). The
       # default is a checked-in placeholder (not a real key) so the stack
       # still comes up unconfigured - git-mcp's tools all report "not
@@ -166,6 +194,10 @@ services:
       - GIT_REMOTE_URL=${GIT_REMOTE_URL:-}
       - GIT_REMOTE_NAME=${GIT_REMOTE_NAME:-origin}
       - GIT_PUSH_BRANCH_PATTERN=${GIT_PUSH_BRANCH_PATTERN:-agent/*}
+      # state.py's GitState defaults this to /repo itself, but that default
+      # would silently disagree with a WORKSPACE_REPO_PATH override above -
+      # pass the same value through explicitly so they can't drift apart.
+      - GIT_REPO_PATH=${WORKSPACE_REPO_PATH:-/repo}
     restart: on-failure
 
   chat-mcp:
@@ -176,8 +208,11 @@ services:
     ports:
       # Only the human-facing UI port is published, and only to loopback.
       # The MCP port (8802) stays internal-only, reachable solely from the
-      # orchestrator over the `internal-chat` network.
-      - "127.0.0.1:8787:8787"
+      # orchestrator over the `internal-chat` network. Host-side port is
+      # overridable (CHAT_UI_HOST_PORT) so concurrent stacks under different
+      # profiles don't fight over the same host port; container-side stays
+      # 8787 always, that's purely internal to this container/image.
+      - "127.0.0.1:${CHAT_UI_HOST_PORT:-8787}:8787"
     restart: on-failure
 
   orchestrator:

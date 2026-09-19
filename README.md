@@ -58,6 +58,32 @@ Not building for these in v1, but keeping them in mind now in case they change t
 Notes:
 - Podman currently doesn't seem a viable platform for MicroVM's at this point (Sept 2026), Podman Machine can be setup to do a similar job, but is much more manual, has some defaults that are incompatible etc.  Also trying to reduce the surface of implementation at this point.  Never say never.
 
+## Workspace image and concurrent profiles
+
+The default Workspace image (`workspace/default.nix`) is deliberately minimal - coreutils and a shell, nothing else (ADR-0001 §3: a phase-1 simplicity choice, not a security one). Cornerstone 7 always wanted more than that: "any OCI container... with the full build environment for the user's tooling setup." Two `.env` values get you there:
+
+- `WORKSPACE_DOCKERFILE_DIR` - a directory containing your own Dockerfile. When set, `nix run .#up` builds it as the Workspace image instead of the Nix one. Whatever that image's own `CMD`/`ENTRYPOINT` is, it never runs - `docker-compose.yml` overrides the container's command to just idle (`sh -c "sleep infinity"`), since `workspace-mcp` only ever `docker exec`s into it, never `docker run`s per command. This means the image needs a POSIX shell and `sleep` present; essentially any real base distro has both.
+- `WORKSPACE_REPO_PATH` - where the shared working tree (the volume `git-mcp` clones/commits/pushes on the agent's behalf) is mounted inside both `git-mcp` and `workspace`. Defaults to `/repo`; override it if your Dockerfile's tooling expects the project root somewhere else. All three of the mount point, `git-mcp`'s own `GIT_REPO_PATH`, and `workspace`'s mount target read this one value, so they can't drift apart.
+
+One thing this doesn't solve for you: if your custom image runs as a non-root user, check that user can actually read/write the shared volume - `git-mcp` writes to it as its own container's (root) user, and a UID mismatch will surface as confusing permission errors in your build tooling rather than an obvious "wrong config" message.
+
+**Profiles - running more than one setup.** Every Bulkhead config value lives in one `.env`-format file, so a second project's setup is just a second file in that same format (any name/extension - `./rust-build.conf`, `./profiles/python.env`, whatever):
+
+```
+nix run .#up -- ./rust-build.conf     # bring up (or switch to) that profile
+nix run .#git-unlock -- ./rust-build.conf
+nix run .#down -- ./rust-build.conf
+```
+
+(Note the `--` before the file path - required for `nix run` to pass it through rather than trying to parse it itself, same as `nix run .#chat -- send "hi"` above.)
+
+Omitting the path uses `.env` and the project name `bulkhead`, unchanged from before profiles existed. Any other file gets its project name from its own basename (`rust-build.conf` → `rust-build`), which Compose uses to namespace that stack's containers/networks/volumes separately from any other profile's - so **multiple profiles can run concurrently**, each fully isolated, not just switched between. Two things to set per additional concurrent profile so they don't collide on host-level resources (namespacing handles everything else automatically):
+
+- `CHAT_UI_HOST_PORT` - each concurrent stack's Chat UI needs its own host port (default `8787`).
+- Nothing else needs a manual value - `WORKSPACE_CONTAINER_NAME` (what `workspace-mcp` targets via `docker exec`) is derived automatically from the profile, not something to set by hand.
+
+`nix run .#down`/`nix run .#git-unlock` must be given the *same* profile path used to bring that stack up - they derive the identical project name from it to find the right one; passing the wrong path (or none, meaning `.env`) targets a different stack, not an error.
+
 ## Kata Containers setup (phase 2, Workspace container)
 
 See [ADR-0002 Decision 1](docs/adr/0002-phase-2-isolation-ux-memory.md#decision) - `docker-compose.yml`'s `workspace` service takes its OCI runtime from `WORKSPACE_RUNTIME` (default `runc`, so an unmodified checkout still works without Kata installed).
