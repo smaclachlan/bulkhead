@@ -55,6 +55,7 @@
           build-workspace-mcp-image = dockerBuildApp "workspace-mcp" "workspace-mcp" "pandora-workspace-mcp:dev";
           build-chat-mcp-image = dockerBuildApp "chat-mcp" "chat-mcp" "pandora-chat-mcp:dev";
           build-orchestrator-image = dockerBuildApp "orchestrator" "orchestrator" "pandora-orchestrator:dev";
+          build-memory-mcp-image = dockerBuildApp "memory-mcp" "memory-mcp" "pandora-memory-mcp:dev";
 
           # Terminal client for Chat MCP's REST API (docs/adr/0002-phase-2-isolation-ux-memory.md,
           # phase-2-scope.md item 3) - a third consumer of the same
@@ -97,10 +98,11 @@
               ${pkgs.docker}/bin/docker load < "$result_link"
               rm -f "$result_link"
 
-              echo "== Building workspace-mcp, chat-mcp, orchestrator images via Docker ==" >&2
+              echo "== Building workspace-mcp, chat-mcp, orchestrator, memory-mcp images via Docker ==" >&2
               ${pkgs.docker}/bin/docker build $no_cache -t pandora-workspace-mcp:dev workspace-mcp
               ${pkgs.docker}/bin/docker build $no_cache -t pandora-chat-mcp:dev chat-mcp
               ${pkgs.docker}/bin/docker build $no_cache -t pandora-orchestrator:dev orchestrator
+              ${pkgs.docker}/bin/docker build $no_cache -t pandora-memory-mcp:dev memory-mcp
 
               echo "== Starting docker compose ==" >&2
               exec ${pkgs.docker-compose}/bin/docker-compose up

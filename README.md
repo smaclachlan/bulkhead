@@ -44,6 +44,7 @@ Not building for these in v1, but keeping them in mind now in case they change t
 3) Orchestrator compromise - already mitigated by design, as the Orchestrator sits in its own MicroVM with no Bash/CLI access (point 1); residual risk is a logic bug in the Harness itself abusing its allowed MCP calls, which point 3's strict marshalling should catch.
 4) Resource exhaustion / cost - a runaway Agent loop hammering paid APIs or filling disk. Mitigate with rate limits/quotas enforced at the MCP/Orchestrator boundary.
 5) Cross-session/cross-agent leakage - state or data leaking between reused Workspace containers in a multi-agent setup. Mitigate by treating Workspace containers as ephemeral and destroying/recreating them per session.
+6) Memory-store poisoning (phase 2, docs/adr/0002-phase-2-isolation-ux-memory.md Decision 4) - content the Agent reads via workspace_exec (a file, a command's output) could carry injected text instructing it to persist something into the Memory MCP server that then gets trusted in a *later* session, since that store is deliberately meant to survive across sessions. Not solved in phase 2; candidate mitigation is surfacing what's about to be persisted to the human before it's written, in a later phase.
 
 # Caveats:
 - Many MCP servers will increase context use slightly

@@ -28,6 +28,12 @@
 #     container/exec API, only to workspace-mcp's single hardcoded-target
 #     `exec` tool. Same reasoning as the internal-workspace/internal-chat
 #     split above, applied to the new proxy.
+#   - internal-memory: an `internal: true` network joined only by
+#     memory-mcp and orchestrator (ADR-0002 §5) - its own network, not
+#     reused from internal-workspace or internal-chat, for the same reason
+#     those two are split from each other: two MCP servers on one shared
+#     internal network can reach each other directly, which none of them
+#     should be able to do.
 #   - egress:    normal outbound network, attached only to orchestrator,
 #     for the LLM provider's API/auth endpoints.
 #   - chat-ui:   a second network for chat-mcp only, used solely to publish
@@ -44,6 +50,8 @@ networks:
   internal-chat:
     internal: true
   internal-docker-proxy:
+    internal: true
+  internal-memory:
     internal: true
   egress: {}
   chat-ui:
@@ -107,6 +115,18 @@ services:
       - docker-socket-proxy
     restart: on-failure
 
+  # Reference MCP memory server (ADR-0002 Decision 4) - a knowledge graph
+  # of entities/relations/observations, persisted to a named volume so it
+  # survives a container recreate. Internal-only, reachable from the
+  # orchestrator alone, no internet egress, no Docker socket - same
+  # network shape as chat-mcp, not workspace-mcp.
+  memory-mcp:
+    image: pandora-memory-mcp:dev
+    networks: [internal-memory]
+    volumes:
+      - memory-data:/data
+    restart: on-failure
+
   chat-mcp:
     image: pandora-chat-mcp:dev
     networks: [internal-chat, chat-ui]
@@ -121,11 +141,18 @@ services:
 
   orchestrator:
     image: pandora-orchestrator:dev
-    networks: [internal-workspace, internal-chat, egress]
+    networks: [internal-workspace, internal-chat, internal-memory, egress]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CHAT_MCP_URL=http://chat-mcp:8802/mcp
     depends_on:
       - workspace-mcp
       - chat-mcp
+      - memory-mcp
     restart: on-failure
+
+volumes:
+  # Memory MCP's knowledge-graph store (ADR-0002 Decision 4) - the first
+  # piece of Pandora state deliberately meant to survive a container
+  # recreate, unlike chat-mcp's in-memory (and unpersisted) ChatState.
+  memory-data: {}

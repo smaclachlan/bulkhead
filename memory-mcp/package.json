@@ -1,0 +1,9 @@
+{
+  "name": "pandora-memory-mcp",
+  "private": true,
+  "description": "Reference MCP memory server, bridged to streamable-http via supergateway - see docs/adr/0002-phase-2-isolation-ux-memory.md Decision 4.",
+  "dependencies": {
+    "@modelcontextprotocol/server-memory": "2026.8.31",
+    "supergateway": "3.4.3"
+  }
+}

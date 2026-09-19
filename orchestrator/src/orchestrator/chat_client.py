@@ -1,11 +1,12 @@
 """Direct MCP client to Chat MCP, used by the harness loop in main.py.
 
 The Orchestrator's LLM is deliberately not given chat_send/chat_receive as
-callable tools (server_names=["workspace"] only in main.py) - waiting for
-human input and relaying the LLM's final reply is harness-level control
-flow, not something the LLM should be deciding to invoke mid-reasoning. See
-docs/adr/0001-phase-1-four-container-architecture.md and implementation.md's
-"Chat loop" description.
+callable tools (main.py's server_names lists workspace/memory, never chat) -
+waiting for human input and relaying the LLM's final reply is harness-level
+control flow, not something the LLM should be deciding to invoke
+mid-reasoning. See docs/adr/0001-phase-1-four-container-architecture.md,
+docs/adr/0002-phase-2-isolation-ux-memory.md Decision 2, and
+implementation.md's "Chat loop" description.
 """
 
 import json

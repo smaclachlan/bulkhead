@@ -1,10 +1,15 @@
 # mcp-agent configuration for the phase 1 Orchestrator.
 # Schema: https://github.com/lastmile-ai/mcp-agent/blob/main/src/mcp_agent/config.py
 #
-# Only one MCP server is registered here - Workspace MCP. Chat MCP is
+# Phase 1: one MCP server registered here - Workspace MCP. Chat MCP is
 # reached directly by orchestrator/src/orchestrator/chat_client.py, not
 # through this Agent-facing server list - see main.py's docstring and
 # docs/adr/0001-phase-1-four-container-architecture.md.
+#
+# Phase 2 (docs/adr/0002-phase-2-isolation-ux-memory.md Decision 4) adds
+# Memory MCP as a second Agent-facing server - a deliberate, scoped
+# narrowing of ADR-0001 §2's "one tool" invariant, not a reversal of it:
+# see that ADR section for why this one server is the accepted exception.
 $schema: https://raw.githubusercontent.com/lastmile-ai/mcp-agent/refs/heads/main/schema/mcp-agent.config.schema.json
 
 name: pandora-orchestrator
@@ -22,6 +27,12 @@ mcp:
     workspace:
       transport: streamable_http
       url: "http://workspace-mcp:8801/mcp"
+    # Server key "memory" + its nine tools become "memory_create_entities",
+    # "memory_search_nodes", etc. See ADR-0002 Decision 4 for the tool list
+    # and the memory-store-poisoning risk it names.
+    memory:
+      transport: streamable_http
+      url: "http://memory-mcp:8803/mcp"
 
 # API key goes in mcp_agent.secrets.yaml (gitignored) or the ANTHROPIC_API_KEY
 # env var - see mcp_agent.secrets.yaml.example.
