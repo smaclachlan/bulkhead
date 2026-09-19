@@ -55,13 +55,27 @@ Notes:
 
 ## Kata Containers setup (phase 2, Workspace container)
 
-See [ADR-0002 Decision 1](docs/adr/0002-phase-2-isolation-ux-memory.md#decision) - `docker-compose.yml`'s `workspace` service takes its OCI runtime from `WORKSPACE_RUNTIME` (default `runc`, so an unmodified checkout still works without Kata installed). To opt in on a host with KVM support:
-1. Install `kata-containers` and `containerd-shim-kata-v2` for your distro.
-2. Register `kata` as a Docker runtime in `/etc/docker/daemon.json`:
-   ```json
-   { "runtimes": { "kata": { "path": "/usr/bin/containerd-shim-kata-v2" } } }
+See [ADR-0002 Decision 1](docs/adr/0002-phase-2-isolation-ux-memory.md#decision) - `docker-compose.yml`'s `workspace` service takes its OCI runtime from `WORKSPACE_RUNTIME` (default `runc`, so an unmodified checkout still works without Kata installed).
+
+**Not via Nix.** `nixpkgs` only has `pkgs.kata-runtime` (the `containerd-shim-kata-v2` binary) - it doesn't package the guest kernel/rootfs image Kata also needs to boot a microVM, and on a non-NixOS host Nix doesn't manage `/etc/docker/daemon.json` either way. Use Kata's own installer instead, which pulls a matching release (shim + guest kernel + guest image + configs together) and can configure Docker directly:
+
+1. ```
+   curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh | bash -s -- -D
    ```
-   then restart the Docker daemon.
-3. Set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
+   (`-D` configures Docker; drop it to configure containerd instead. Needs KVM - see below.)
+2. Register `kata` as a Docker runtime in `/etc/docker/daemon.json`. Kata ships a containerd **shim-v2** binary, not a classic OCI-runtime CLI, so this needs a `runtimeType`, not a `path`:
+   ```json
+   { "runtimes": { "kata": { "runtimeType": "io.containerd.kata.v2" } } }
+   ```
+   then `sudo systemctl restart docker`.
+3. Validate Kata itself works, independent of Pandora: `docker run --runtime=kata --rm busybox uname -r` should print a **different** kernel version than the host's own `uname -r` - if it matches, Kata isn't really engaging even though the runtime name is accepted.
+4. Set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
 
 If Pandora itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.
+
+### Validating it end-to-end
+
+- `docker info | grep -A5 Runtimes` should list `kata` alongside `runc`.
+- `docker inspect pandora-workspace --format '{{.HostConfig.Runtime}}'` → `kata`.
+- With `WORKSPACE_RUNTIME=kata` set in the environment, `sh scripts/validate-phase2.sh` runs its step 8 Kata check automatically instead of skipping it (see `docs/plans/phase-2-validation.md`).
+- The kernel-differential probe from step 3 above, run *through Pandora* rather than a bare `docker run`: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.
