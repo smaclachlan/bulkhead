@@ -9,8 +9,12 @@ FROM python:3.12-slim
 
 # Only the docker CLI is needed - this container never runs a docker daemon
 # of its own, it shells out to the host daemon via the bind-mounted socket.
+# NB: `docker.io` on Debian only ships dockerd/containerd/runc (the daemon);
+# the `docker` binary itself lives in the separate `docker-cli` package,
+# which is merely a Recommends of docker.io - `--no-install-recommends`
+# silently drops it, leaving no `docker` executable at all.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io \
+    && apt-get install -y --no-install-recommends docker-cli \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
