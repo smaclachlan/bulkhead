@@ -59,7 +59,7 @@ see `validation-results/README.md` for the record shape.
 
 - **Kata runtime actually took effect** (ADR-0002 Decision 1): on a host
   with Kata installed and `WORKSPACE_RUNTIME=kata` set,
-  `docker inspect axle-workspace --format '{{.HostConfig.Runtime}}'` →
+  `docker inspect bulkhead-workspace --format '{{.HostConfig.Runtime}}'` →
   `kata`, not `runc`. Skipped by the automated harness unless
   `WORKSPACE_RUNTIME=kata` is set in the environment it runs in - most
   checkouts won't have Kata installed, and the point of the env-var default

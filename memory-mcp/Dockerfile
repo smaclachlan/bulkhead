@@ -6,7 +6,7 @@
 # Orchestrator itself. See docs/adr/0002-phase-2-isolation-ux-memory.md
 # Decision 4.
 #
-# Axle's first Node-based container - Dockerfile + package.json is the
+# Bulkhead's first Node-based container - Dockerfile + package.json is the
 # same per-image pattern ADR-0001 §3 uses for the three Python containers,
 # just a different runtime; see that ADR for why these stay plain
 # Dockerfiles instead of pure Nix derivations.

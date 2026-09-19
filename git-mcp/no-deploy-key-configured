@@ -1,0 +1,6 @@
+This is a placeholder, not a real key - see README's "Git MCP setup" section
+and .env.example's GIT_SSH_DEPLOY_KEY_HOST_PATH. It exists only so
+docker-compose.yml's bind mount has something to point at by default and the
+stack still comes up on an unconfigured checkout (git-mcp's tools all report
+"not configured" until GIT_REMOTE_URL/this path are set for real - see
+git-mcp/src/git_mcp/state.py's `configured` flag).

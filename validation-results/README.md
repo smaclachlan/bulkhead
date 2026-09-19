@@ -1,8 +1,9 @@
 # Validation results
 
-Attestation trail produced by `scripts/validate-<phase>.sh` (currently just
-`scripts/validate-phase1.sh`). Each run appends a timestamped JSON record
-under `<phase>/`, plus overwrites `<phase>/latest.json` for convenience.
+Attestation trail produced by `scripts/validate-<phase>.sh`
+(`validate-phase1.sh`, `validate-phase2.sh`, `validate-phase3.sh`). Each run
+appends a timestamped JSON record under `<phase>/`, plus overwrites
+`<phase>/latest.json` for convenience.
 
 These are committed to git deliberately - the point is a durable, append-only
 record of when the containment properties in

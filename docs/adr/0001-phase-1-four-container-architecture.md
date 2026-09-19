@@ -7,7 +7,7 @@
 
 ## Context
 
-Axle's goal (README.md) is a sandbox that keeps an LLM-driven agent contained:
+Bulkhead's goal (README.md) is a sandbox that keeps an LLM-driven agent contained:
 no direct shell access from the Orchestrator, a network-isolated Workspace that
 can only be reached through one narrow, privileged exec path, and every other
 capability mediated by a strictly-scoped MCP server.
@@ -181,7 +181,7 @@ abstraction is `mcp-agent`'s job, not something phase 1 needs to prove twice.
   alternative given the threat model in README.
 - **Kubernetes instead of Compose for phase 1 supervision.** Rejected for now
   as disproportionate operational overhead for a four-container local-first
-  milestone; revisit if Axle needs multi-host or multi-tenant scheduling.
+  milestone; revisit if Bulkhead needs multi-host or multi-tenant scheduling.
 - **Scoped docker-socket-proxy from day one instead of the raw socket.**
   Considered and deferred rather than rejected (see Decision #5) — it's
   additive later without changing Workspace MCP's external API.

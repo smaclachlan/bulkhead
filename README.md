@@ -1,6 +1,6 @@
-# Axle - Sandbox Environment for keeping your Agents in the box.
+# Bulkhead - Sandbox Environment for keeping your Agents in the box.
 
-Axle is the strong, secure, load-bearing core that keeps your AI agents
+Bulkhead is the strong, secure, load-bearing core that keeps your AI agents
 moving - a fixed, trusted hub that lets disposable workspace containers
 rotate on and off around it, without ever letting the agent itself bear
 the weight of host access it shouldn't have.
@@ -84,11 +84,42 @@ It installs Docker (`docker.io` + the compose plugin) if missing, downloads and 
 
 Once that script passes, set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
 
-If Axle itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.
+If Bulkhead itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.
 
 ### Validating it end-to-end
 
 - `docker info | grep -A5 Runtimes` should list `kata` alongside `runc`.
-- `docker inspect axle-workspace --format '{{.HostConfig.Runtime}}'` → `kata`.
+- `docker inspect bulkhead-workspace --format '{{.HostConfig.Runtime}}'` → `kata`.
 - With `WORKSPACE_RUNTIME=kata` set in the environment, `sh scripts/validate-phase2.sh` runs its step 8 Kata check automatically instead of skipping it (see `docs/plans/phase-2-validation.md`).
-- The same kernel-differential check `setup-kata-host.sh` ran against a bare `docker run`, but *through Axle* this time: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.
+- The same kernel-differential check `setup-kata-host.sh` ran against a bare `docker run`, but *through Bulkhead* this time: ask the agent in chat to run `uname -r` (it'll go through `workspace_exec`) and compare against the host's own `uname -r`.
+
+## Git MCP setup (phase 3, code egress)
+
+See [ADR-0003](docs/adr/0003-phase-3-git-mcp.md) for the full design. Three
+`.env` values are required before `git-mcp` will start - see
+`.env.example`:
+
+```
+GIT_REMOTE_URL=git@github.com:your-org/your-repo.git
+GIT_SSH_DEPLOY_KEY_HOST_PATH=/path/to/a/deploy_key
+GIT_PUSH_BRANCH_PATTERN=agent/*   # default shown; the agent can only push here
+```
+
+The deploy key should be scoped to that one repo on the remote host (a
+GitHub/GitLab "deploy key", not a personal SSH key) - it's bind-mounted
+read-only into `git-mcp` alone and never reaches any other container.
+
+Once the stack is up, the agent has `git_status`/`git_diff`/`git_log`/
+`git_branch_list`/`git_commit`/`git_create_branch`/`git_checkout` available
+immediately (all local, all ungated) plus `git_push_request(branch)`, which
+only *stages* a push - it never pushes on its own. A pending push shows up
+in chat as e.g.:
+
+```
+Pending push approval:
+- 3f9a1c2b8e0d4a5f: push HEAD -> origin/agent/my-branch (reply 'approve 3f9a1c2b8e0d4a5f' or 'deny 3f9a1c2b8e0d4a5f')
+```
+
+Replying `approve <id>` or `deny <id>` is handled by the Orchestrator's
+harness code directly - not the LLM - and is the only way an external push
+actually goes out (README's Egress section / ADR-0003 Decision 3).

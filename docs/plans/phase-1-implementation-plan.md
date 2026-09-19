@@ -50,7 +50,7 @@ apps that shell out to `docker build` (their Dockerfiles land in Milestones
 - [x] No network (`docker run --network none` or Compose equivalent — confirm in Milestone 5's Compose file too).
 - [x] No credentials, no MCP client, no inbound-listening process of any kind.
 
-**Definition of done:** `docker run --network none --name axle-workspace <image> sleep infinity` starts it; `docker exec axle-workspace echo ok` works; `docker exec axle-workspace sh -c "curl -s example.com"` fails (no network path).
+**Definition of done:** `docker run --network none --name bulkhead-workspace <image> sleep infinity` starts it; `docker exec bulkhead-workspace echo ok` works; `docker exec bulkhead-workspace sh -c "curl -s example.com"` fails (no network path).
 
 ---
 
@@ -119,11 +119,11 @@ Not runnable in this sandbox (no Nix or Docker) — needs verifying on a machine
 
 **Goal:** prove the full path named in phase 1's success criteria, as a repeatable check.
 
-- [x] Runbook written: [phase-1-validation.md](phase-1-validation.md) — `nix run .#up` from a clean checkout, open the printed Chat MCP URL, send a message requiring a shell command, confirm the reply reflects real command output, then confirm containment (host-side check that the command really ran inside `axle-workspace`, and that network segmentation held).
+- [x] Runbook written: [phase-1-validation.md](phase-1-validation.md) — `nix run .#up` from a clean checkout, open the printed Chat MCP URL, send a message requiring a shell command, confirm the reply reflects real command output, then confirm containment (host-side check that the command really ran inside `bulkhead-workspace`, and that network segmentation held).
 - [x] Added a one-line audit log per `exec` call in Workspace MCP (`[workspace-mcp] exec exit=<code>: <command>`) so the runbook's containment check has something to point at (`docker compose logs workspace-mcp`) beyond trusting the reply text.
 - [x] Walkthrough run for real on the developer's machine (Nix + Docker + a real `ANTHROPIC_API_KEY`). Hit and fixed a real bug along the way: `workspace-mcp`'s image was missing the `docker` CLI at runtime even though its Dockerfile's `apt-get install docker.io` reported success — Debian's `docker.io` package only ships the daemon (`dockerd`/`containerd`/`runc`); the actual `docker` binary lives in the separate `docker-cli` package, which is merely a `Recommends` of `docker.io` and so was silently dropped by `--no-install-recommends`. Fixed by installing `docker-cli` directly (see `workspace-mcp/Dockerfile`).
 - [x] Core path confirmed live: sent chat messages requiring tool use, got real replies driven by real `workspace_exec` calls (not generic/refusal text) — the Orchestrator's LLM used `workspace_exec` to probe its own sandbox and correctly reported no DNS/outbound TCP/curl/wget/ping available, matching the Workspace container's `network_mode: none`. Satisfies runbook step 4 and, informally (from inside the container rather than the prescribed host-side `docker inspect`/`docker compose exec` checks), the spirit of step 2.
-- [ ] Runbook steps 2 (host-side network segmentation checks), 3 (403-without-token check), 5 (host-side containment check via `docker exec axle-workspace` + `workspace-mcp` audit log), and 6 (no-op-turn survival) were not walked explicitly checkbox-by-checkbox in this session — worth a quick pass to close those out formally, though nothing in this session suggests they'd fail.
+- [ ] Runbook steps 2 (host-side network segmentation checks), 3 (403-without-token check), 5 (host-side containment check via `docker exec bulkhead-workspace` + `workspace-mcp` audit log), and 6 (no-op-turn survival) were not walked explicitly checkbox-by-checkbox in this session — worth a quick pass to close those out formally, though nothing in this session suggests they'd fail.
 
 **Definition of done:** the walkthrough in phase-1-validation.md passes without manual workarounds, on a machine with Nix + Docker. Core path (steps 1 and 4) verified live; steps 2/3/5/6 still need an explicit pass to formally close this out.
 

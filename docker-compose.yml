@@ -34,6 +34,14 @@
 #     those two are split from each other: two MCP servers on one shared
 #     internal network can reach each other directly, which none of them
 #     should be able to do.
+#   - internal-git: an `internal: true` network joined only by git-mcp and
+#     orchestrator (ADR-0003 §5) - same reasoning as internal-memory above,
+#     its own network rather than reused from any other MCP server's.
+#   - git-egress: normal outbound network, attached only to git-mcp, for
+#     its one outbound connection to the pre-configured git remote
+#     (ADR-0003 §5). Deliberately separate from `egress` below - the
+#     Orchestrator has no business reaching the git remote directly, and
+#     git-mcp has no business reaching the LLM provider.
 #   - egress:    normal outbound network, attached only to orchestrator,
 #     for the LLM provider's API/auth endpoints.
 #   - chat-ui:   a second network for chat-mcp only, used solely to publish
@@ -53,6 +61,9 @@ networks:
     internal: true
   internal-memory:
     internal: true
+  internal-git:
+    internal: true
+  git-egress: {}
   egress: {}
   chat-ui:
     driver_opts:
@@ -60,8 +71,8 @@ networks:
 
 services:
   workspace:
-    image: axle-workspace:dev
-    container_name: axle-workspace
+    image: bulkhead-workspace:dev
+    container_name: bulkhead-workspace
     network_mode: "none"
     # Kata Containers (ADR-0002 Decision 1): swaps the OCI runtime from
     # `runc` (shared host kernel) to a per-container microVM for the one
@@ -70,6 +81,12 @@ services:
     # still comes up - set WORKSPACE_RUNTIME=kata in .env once Kata is
     # set up on the host (see .env.example / README).
     runtime: ${WORKSPACE_RUNTIME:-runc}
+    # Shared with git-mcp (ADR-0003 Decision 1) - the working tree git-mcp
+    # clones/commits/pushes on the agent's behalf. Workspace itself still
+    # has no git installed and no network - it only ever sees the files
+    # that land here via git-mcp's side of the volume.
+    volumes:
+      - workspace-repo:/repo
     restart: on-failure
 
   # Scoped Docker-socket proxy, fronting the raw socket for workspace-mcp.
@@ -84,7 +101,7 @@ services:
   # the *only* container with the socket bind mount.
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
-    container_name: axle-docker-socket-proxy
+    container_name: bulkhead-docker-socket-proxy
     # Its own network, not internal-workspace - orchestrator must not be
     # able to reach this directly, only through workspace-mcp. See the
     # internal-docker-proxy comment above.
@@ -98,14 +115,14 @@ services:
     restart: on-failure
 
   workspace-mcp:
-    image: axle-workspace-mcp:dev
+    image: bulkhead-workspace-mcp:dev
     # internal-workspace: reachable from orchestrator (existing).
     # internal-docker-proxy: reaches docker-socket-proxy (ADR-0002 §3) -
     # orchestrator is not on this network, so it can't reach the proxy
     # directly, only workspace-mcp's own narrow `exec` tool.
     networks: [internal-workspace, internal-docker-proxy]
     environment:
-      - WORKSPACE_CONTAINER_ID=axle-workspace
+      - WORKSPACE_CONTAINER_ID=bulkhead-workspace
       # No socket bind mount here any more - the `docker` CLI talks to
       # docker-socket-proxy's filtered API instead of the host daemon
       # directly. See ADR-0002 §3 above.
@@ -121,14 +138,38 @@ services:
   # orchestrator alone, no internet egress, no Docker socket - same
   # network shape as chat-mcp, not workspace-mcp.
   memory-mcp:
-    image: axle-memory-mcp:dev
+    image: bulkhead-memory-mcp:dev
     networks: [internal-memory]
     volumes:
       - memory-data:/data
     restart: on-failure
 
+  # Git MCP (ADR-0003) - the code egress path. Only container with network
+  # egress to the git remote and the only one holding the deploy key; no
+  # Docker socket, unlike workspace-mcp - a different privilege shape
+  # entirely (filesystem + one outbound network path, not host container
+  # control). Runs two MCP endpoints in one process (server.py) - see
+  # ADR-0003 Decision 3 for why push_execute/pending_push/push_cancel are
+  # on a separate port that's never registered with the Orchestrator's LLM.
+  git-mcp:
+    image: bulkhead-git-mcp:dev
+    networks: [internal-git, git-egress]
+    volumes:
+      - workspace-repo:/repo
+      # Read-only deploy key, this container only (ADR-0003 Decision 4). The
+      # default is a checked-in placeholder (not a real key) so the stack
+      # still comes up unconfigured - git-mcp's tools all report "not
+      # configured" until GIT_REMOTE_URL and this path are set for real (see
+      # README's Git MCP setup section / state.py's `configured` flag).
+      - ${GIT_SSH_DEPLOY_KEY_HOST_PATH:-./git-mcp/no-deploy-key-configured}:/run/secrets/deploy_key:ro
+    environment:
+      - GIT_REMOTE_URL=${GIT_REMOTE_URL:-}
+      - GIT_REMOTE_NAME=${GIT_REMOTE_NAME:-origin}
+      - GIT_PUSH_BRANCH_PATTERN=${GIT_PUSH_BRANCH_PATTERN:-agent/*}
+    restart: on-failure
+
   chat-mcp:
-    image: axle-chat-mcp:dev
+    image: bulkhead-chat-mcp:dev
     networks: [internal-chat, chat-ui]
     environment:
       - CHAT_MCP_TOKEN=${CHAT_MCP_TOKEN:-}
@@ -140,19 +181,28 @@ services:
     restart: on-failure
 
   orchestrator:
-    image: axle-orchestrator:dev
-    networks: [internal-workspace, internal-chat, internal-memory, egress]
+    image: bulkhead-orchestrator:dev
+    networks: [internal-workspace, internal-chat, internal-memory, internal-git, egress]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CHAT_MCP_URL=http://chat-mcp:8802/mcp
+      # git-mcp's admin port (push_execute/pending_push/push_cancel) is
+      # reached directly by git_admin_client.py, not via mcp_agent.config.yaml
+      # /server_names - see ADR-0003 Decision 3.
+      - GIT_MCP_ADMIN_URL=http://git-mcp:8806/mcp
     depends_on:
       - workspace-mcp
       - chat-mcp
       - memory-mcp
+      - git-mcp
     restart: on-failure
 
 volumes:
   # Memory MCP's knowledge-graph store (ADR-0002 Decision 4) - the first
-  # piece of Axle state deliberately meant to survive a container
+  # piece of Bulkhead state deliberately meant to survive a container
   # recreate, unlike chat-mcp's in-memory (and unpersisted) ChatState.
   memory-data: {}
+  # The Workspace's actual working tree (ADR-0003 Decision 1) - shared
+  # between workspace and git-mcp, resolving README point 8's previously
+  # open "where does the working tree live" question.
+  workspace-repo: {}

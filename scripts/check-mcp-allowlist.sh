@@ -43,6 +43,24 @@ ALLOWLIST = {
             "read_graph", "search_nodes", "open_nodes",
         ]),
     },
+    # git-mcp LLM-facing port (docs/adr/0003-phase-3-git-mcp.md Decision 2)
+    # - push_request only stages a request, it must never be push_execute.
+    "git-mcp": {
+        "url": "http://git-mcp:8805/mcp",
+        "tools": sorted([
+            "status", "diff", "log", "branch_list",
+            "commit", "create_branch", "checkout", "push_request",
+        ]),
+    },
+    # git-mcp admin port - reachable from orchestrator over the network
+    # (internal-git) but never registered in mcp_agent.config.yaml/
+    # server_names, so the LLM has no way to call these even though the
+    # container-to-container route exists. Checked here for drift, same as
+    # every other server - not a claim that this port is unreachable.
+    "git-mcp-admin": {
+        "url": "http://git-mcp:8806/mcp",
+        "tools": sorted(["pending_push", "push_execute", "push_cancel"]),
+    },
 }
 
 async def check_one(name, url, expected):

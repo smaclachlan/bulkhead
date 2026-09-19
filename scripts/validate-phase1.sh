@@ -47,7 +47,7 @@ abort() {
 }
 
 if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
-  abort "run this from the axle repo root"
+  abort "run this from the bulkhead repo root"
 fi
 
 command -v docker >/dev/null 2>&1 || abort "docker not found on PATH"
@@ -77,11 +77,11 @@ fi
 echo
 echo "== Step 2: network segmentation =="
 
-netmode="$(docker inspect axle-workspace --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)"
+netmode="$(docker inspect bulkhead-workspace --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)"
 if [ "$netmode" = "none" ]; then
-  record step2.workspace-no-network pass "axle-workspace NetworkMode is 'none'"
+  record step2.workspace-no-network pass "bulkhead-workspace NetworkMode is 'none'"
 else
-  record step2.workspace-no-network fail "axle-workspace NetworkMode check" "got '$netmode'"
+  record step2.workspace-no-network fail "bulkhead-workspace NetworkMode check" "got '$netmode'"
 fi
 
 check_no_egress() {
@@ -137,7 +137,7 @@ if [ -z "${token:-}" ]; then
   record step5.audit-logged fail "skipped - no chat-mcp token"
 else
   run_id="$(date +%s)"
-  marker="axle-validate-${run_id}"
+  marker="bulkhead-validate-${run_id}"
   fname="${marker}.txt"
   content="harness-check-${run_id}"
 
@@ -181,11 +181,11 @@ for m in data.get('messages', []):
     record step5.audit-logged fail "workspace-mcp logged a new exec call" "$exec_log_before -> $exec_log_after"
   fi
 
-  in_container="$(docker exec axle-workspace sh -c "cat ${fname}" 2>&1)"
+  in_container="$(docker exec bulkhead-workspace sh -c "cat ${fname}" 2>&1)"
   if [ "$in_container" = "$content" ]; then
-    record step5.file-in-container pass "file independently re-read inside axle-workspace" "contents: $in_container"
+    record step5.file-in-container pass "file independently re-read inside bulkhead-workspace" "contents: $in_container"
   else
-    record step5.file-in-container fail "file independently re-read inside axle-workspace" "got: $in_container"
+    record step5.file-in-container fail "file independently re-read inside bulkhead-workspace" "got: $in_container"
   fi
 
   host_hit="$(find . -maxdepth 2 -iname "${fname}" 2>/dev/null)"
@@ -337,14 +337,14 @@ asyncio.run(main())
 # Write the client script into a container via stdin (docker compose exec -T
 # disables the pseudo-tty so a heredoc can be piped in as stdin).
 write_mcp_client() {
-  docker compose exec -T "$1" python3 -c "import sys; open('/tmp/axle_mcp_check.py','w').write(sys.stdin.read())" <<PYEOF
+  docker compose exec -T "$1" python3 -c "import sys; open('/tmp/bulkhead_mcp_check.py','w').write(sys.stdin.read())" <<PYEOF
 $mcp_client_py
 PYEOF
 }
 
 run_mcp_check() {
   # run_mcp_check <service> <url> <mode> <marker>
-  docker compose exec -T "$1" python3 /tmp/axle_mcp_check.py "$2" "$3" "$4" 2>&1
+  docker compose exec -T "$1" python3 /tmp/bulkhead_mcp_check.py "$2" "$3" "$4" 2>&1
 }
 
 extract_json() {
@@ -356,7 +356,7 @@ extract_json() {
 write_mcp_client workspace-mcp >/dev/null 2>&1
 write_mcp_client chat-mcp >/dev/null 2>&1
 
-marker7="axle-mcp-check-$(date +%s)"
+marker7="bulkhead-mcp-check-$(date +%s)"
 raw="$(run_mcp_check workspace-mcp "http://localhost:8801/mcp" exec "$marker7")"
 json_line="$(extract_json "$raw")"
 
@@ -398,7 +398,7 @@ print('error_val=' + sh(d.get('error', '')))
   fi
 fi
 
-marker7b="axle-mcp-escape-$(date +%s)"
+marker7b="bulkhead-mcp-escape-$(date +%s)"
 raw_escape="$(run_mcp_check workspace-mcp "http://localhost:8801/mcp" escape "$marker7b")"
 json_escape="$(extract_json "$raw_escape")"
 escape_text="$(printf '%s' "$json_escape" | python3 -c "import json,sys; print(json.load(sys.stdin).get('exec_text',''))" 2>/dev/null)"

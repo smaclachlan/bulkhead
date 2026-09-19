@@ -1,5 +1,5 @@
 {
-  "name": "axle-memory-mcp",
+  "name": "bulkhead-memory-mcp",
   "private": true,
   "description": "Reference MCP memory server, bridged to streamable-http via supergateway - see docs/adr/0002-phase-2-isolation-ux-memory.md Decision 4.",
   "dependencies": {

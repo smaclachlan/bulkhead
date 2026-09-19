@@ -1,5 +1,5 @@
 {
-  description = "Axle - sandbox environment for keeping agents in the box (phase 1: four-container skeleton)";
+  description = "Bulkhead - sandbox environment for keeping agents in the box (phase 1: four-container skeleton)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -34,7 +34,7 @@
           program = toString (pkgs.writeShellScript "build-${name}-image" ''
             set -euo pipefail
             if [ ! -f flake.nix ]; then
-              echo "run this from the axle repo root (flake.nix not found in $PWD)" >&2
+              echo "run this from the bulkhead repo root (flake.nix not found in $PWD)" >&2
               exit 1
             fi
             no_cache=""
@@ -52,10 +52,11 @@
         };
 
         apps = {
-          build-workspace-mcp-image = dockerBuildApp "workspace-mcp" "workspace-mcp" "axle-workspace-mcp:dev";
-          build-chat-mcp-image = dockerBuildApp "chat-mcp" "chat-mcp" "axle-chat-mcp:dev";
-          build-orchestrator-image = dockerBuildApp "orchestrator" "orchestrator" "axle-orchestrator:dev";
-          build-memory-mcp-image = dockerBuildApp "memory-mcp" "memory-mcp" "axle-memory-mcp:dev";
+          build-workspace-mcp-image = dockerBuildApp "workspace-mcp" "workspace-mcp" "bulkhead-workspace-mcp:dev";
+          build-chat-mcp-image = dockerBuildApp "chat-mcp" "chat-mcp" "bulkhead-chat-mcp:dev";
+          build-orchestrator-image = dockerBuildApp "orchestrator" "orchestrator" "bulkhead-orchestrator:dev";
+          build-memory-mcp-image = dockerBuildApp "memory-mcp" "memory-mcp" "bulkhead-memory-mcp:dev";
+          build-git-mcp-image = dockerBuildApp "git-mcp" "git-mcp" "bulkhead-git-mcp:dev";
 
           # Terminal client for Chat MCP's REST API (docs/adr/0002-phase-2-isolation-ux-memory.md,
           # phase-2-scope.md item 3) - a third consumer of the same
@@ -70,10 +71,10 @@
           # setup beyond the stack being up.)
           chat = {
             type = "app";
-            program = toString (pkgs.writeShellScript "axle-chat" ''
+            program = toString (pkgs.writeShellScript "bulkhead-chat" ''
               set -euo pipefail
               if [ ! -f flake.nix ]; then
-                echo "run this from the axle repo root (flake.nix not found in $PWD)" >&2
+                echo "run this from the bulkhead repo root (flake.nix not found in $PWD)" >&2
                 exit 1
               fi
               exec ${pkgs.python3}/bin/python3 chat-mcp/src/chat_mcp/cli.py "$@"
@@ -82,10 +83,10 @@
 
           up = {
             type = "app";
-            program = toString (pkgs.writeShellScript "axle-up" ''
+            program = toString (pkgs.writeShellScript "bulkhead-up" ''
               set -euo pipefail
               if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
-                echo "run this from the axle repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
+                echo "run this from the bulkhead repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
                 exit 1
               fi
 
@@ -101,11 +102,12 @@
               ${pkgs.docker}/bin/docker load < "$result_link"
               rm -f "$result_link"
 
-              echo "== Building workspace-mcp, chat-mcp, orchestrator, memory-mcp images via Docker ==" >&2
-              ${pkgs.docker}/bin/docker build $no_cache -t axle-workspace-mcp:dev workspace-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t axle-chat-mcp:dev chat-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t axle-orchestrator:dev orchestrator
-              ${pkgs.docker}/bin/docker build $no_cache -t axle-memory-mcp:dev memory-mcp
+              echo "== Building workspace-mcp, chat-mcp, orchestrator, memory-mcp, git-mcp images via Docker ==" >&2
+              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-workspace-mcp:dev workspace-mcp
+              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-chat-mcp:dev chat-mcp
+              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-orchestrator:dev orchestrator
+              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-memory-mcp:dev memory-mcp
+              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-git-mcp:dev git-mcp
 
               echo "== Starting docker compose ==" >&2
               exec ${pkgs.docker-compose}/bin/docker-compose up
