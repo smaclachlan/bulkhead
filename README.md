@@ -51,3 +51,16 @@ Not building for these in v1, but keeping them in mind now in case they change t
 
 Notes:
 - Podman currently doesn't seem a viable platform for MicroVM's at this point (Sept 2026), Podman Machine can be setup to do a similar job, but is much more manual, has some defaults that are incompatible etc.  Also trying to reduce the surface of implementation at this point.  Never say never.
+
+## Kata Containers setup (phase 2, Workspace container)
+
+See [ADR-0002 Decision 1](docs/adr/0002-phase-2-isolation-ux-memory.md#decision) - `docker-compose.yml`'s `workspace` service takes its OCI runtime from `WORKSPACE_RUNTIME` (default `runc`, so an unmodified checkout still works without Kata installed). To opt in on a host with KVM support:
+1. Install `kata-containers` and `containerd-shim-kata-v2` for your distro.
+2. Register `kata` as a Docker runtime in `/etc/docker/daemon.json`:
+   ```json
+   { "runtimes": { "kata": { "path": "/usr/bin/containerd-shim-kata-v2" } } }
+   ```
+   then restart the Docker daemon.
+3. Set `WORKSPACE_RUNTIME=kata` in `.env` and re-run `nix run .#up`.
+
+If Pandora itself runs inside a VM (a cloud dev box, CI), nested virtualization needs to be enabled on that host first - Kata needs real KVM access, not just a registered runtime name.

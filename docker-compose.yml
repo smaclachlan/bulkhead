@@ -55,6 +55,13 @@ services:
     image: pandora-workspace:dev
     container_name: pandora-workspace
     network_mode: "none"
+    # Kata Containers (ADR-0002 Decision 1): swaps the OCI runtime from
+    # `runc` (shared host kernel) to a per-container microVM for the one
+    # container that runs arbitrary agent-issued shell commands. Defaults
+    # to plain `runc` so a checkout without Kata installed/registered
+    # still comes up - set WORKSPACE_RUNTIME=kata in .env once Kata is
+    # set up on the host (see .env.example / README).
+    runtime: ${WORKSPACE_RUNTIME:-runc}
     restart: on-failure
 
   # Scoped Docker-socket proxy, fronting the raw socket for workspace-mcp.
