@@ -119,14 +119,11 @@ Not runnable in this sandbox (no Nix or Docker) — needs verifying on a machine
 
 **Goal:** prove the full path named in phase 1's success criteria, as a repeatable check.
 
-- [ ] `nix run .#up` from a clean checkout.
-- [ ] Open the printed Chat MCP URL (with token) in a browser.
-- [ ] Send a message that requires a shell command (e.g. "list the files in the workspace").
-- [ ] Confirm: Orchestrator calls `workspace_exec` -> Workspace MCP -> `docker exec` into Workspace -> real output comes back -> LLM's reply (incorporating that output) appears in the chat UI.
-- [ ] Confirm containment held throughout: nothing outside the Workspace container executed the command; Workspace never had network access at any point; Workspace MCP's Docker socket was the only path used.
-- [ ] Write this walkthrough up as a short runbook/checklist (`docs/plans/phase-1-validation.md` or similar) so it's repeatable, not just something done once by hand.
+- [x] Runbook written: [phase-1-validation.md](phase-1-validation.md) — `nix run .#up` from a clean checkout, open the printed Chat MCP URL, send a message requiring a shell command, confirm the reply reflects real command output, then confirm containment (host-side check that the command really ran inside `pandora-workspace`, and that network segmentation held).
+- [x] Added a one-line audit log per `exec` call in Workspace MCP (`[workspace-mcp] exec exit=<code>: <command>`) so the runbook's containment check has something to point at (`docker compose logs workspace-mcp`) beyond trusting the reply text.
+- [ ] Actually run the walkthrough. **Not done** — needs Nix + Docker + a real `ANTHROPIC_API_KEY`, none of which this sandbox has. This is the one milestone whose "definition of done" could not be exercised in this session at all, even partially; everything else it depends on (Milestones 1-5) was verified individually as described in each of their notes above.
 
-**Definition of done:** the walkthrough above passes without manual workarounds. This closes phase 1.
+**Definition of done:** the walkthrough in phase-1-validation.md passes without manual workarounds, on a machine with Nix + Docker. This closes phase 1 — outstanding until run.
 
 ---
 

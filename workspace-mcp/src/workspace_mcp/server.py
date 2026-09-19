@@ -47,12 +47,17 @@ def exec_command(command: str) -> dict:
             timeout=EXEC_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
+        print(f"[workspace-mcp] exec timed out after {EXEC_TIMEOUT_SECONDS}s: {command!r}")
         return {
             "stdout": _decode(exc.stdout),
             "stderr": _decode(exc.stderr)
             + f"\n[workspace-mcp] command timed out after {EXEC_TIMEOUT_SECONDS}s",
             "exit_code": -1,
         }
+
+    # The only audit trail for the only privileged path in the topology -
+    # see docs/plans/phase-1-validation.md's containment check.
+    print(f"[workspace-mcp] exec exit={result.returncode}: {command!r}")
 
     return {
         "stdout": result.stdout,
