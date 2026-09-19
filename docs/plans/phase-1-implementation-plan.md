@@ -28,15 +28,17 @@ on both of the others existing and working.
 
 ### Milestone 0 — Flake skeleton
 
-**Goal:** `nix flake check` passes with four empty-but-structured packages;
-nothing runs yet.
+**Goal:** `nix flake check` passes. Per ADR-0001 §3, only Workspace is a pure
+Nix package; the three Python containers are Dockerfile-based, built via flake
+apps that shell out to `docker build` (their Dockerfiles land in Milestones
+2-4, not here).
 
-- [ ] `flake.nix` with outputs `packages.{orchestrator,workspace,workspace-mcp,chat-mcp}-image`, each currently a minimal placeholder derivation.
-- [ ] Per-component directory (`orchestrator/`, `workspace/`, `workspace-mcp/`, `chat-mcp/`) with its own `default.nix` or equivalent, wired into the flake.
-- [ ] `apps.up` stubbed (prints "not implemented" — real implementation lands in Milestone 5).
-- [ ] Decide, per component, `dockerTools.buildLayeredImage` vs. Dockerfile fallback (ADR-0001 §3) and note the choice in that component's directory.
+- [x] `flake.nix` with `packages.workspace-image` (real, via `dockerTools.buildLayeredImage`) and `apps.build-{workspace-mcp,chat-mcp,orchestrator}-image` (each shells out to `docker build` against that component's directory).
+- [x] Per-component directory (`orchestrator/`, `workspace/`, `workspace-mcp/`, `chat-mcp/`) wired into the flake.
+- [x] `apps.up` stubbed (prints "not implemented" — real implementation lands in Milestone 5).
+- [x] `devShells.default` with `docker`, `docker-compose`, `python3` for local iteration.
 
-**Definition of done:** `nix flake check` succeeds; `nix build .#workspace-image` (etc.) produces a loadable image for all four, even if the image does nothing yet.
+**Definition of done:** `nix flake check` succeeds; `nix build .#workspace-image` produces a loadable image. (Verified on the developer's machine, which has Nix + Docker — this sandbox has neither.)
 
 ---
 
@@ -44,9 +46,9 @@ nothing runs yet.
 
 **Goal:** a minimal, network-isolated container that can be `docker exec`'d into by hand.
 
-- [ ] Minimal base image + coreutils/shell (per `implementation.md`: enough for `echo`, `ls`, `cat` — not a full build toolchain yet).
-- [ ] No network (`docker run --network none` or Compose equivalent — confirm in Milestone 5's Compose file too).
-- [ ] No credentials, no MCP client, no inbound-listening process of any kind.
+- [x] Minimal base image + coreutils/shell (per `implementation.md`: enough for `echo`, `ls`, `cat` — not a full build toolchain yet).
+- [x] No network (`docker run --network none` or Compose equivalent — confirm in Milestone 5's Compose file too).
+- [x] No credentials, no MCP client, no inbound-listening process of any kind.
 
 **Definition of done:** `docker run --network none --name pandora-workspace <image> sleep infinity` starts it; `docker exec pandora-workspace echo ok` works; `docker exec pandora-workspace sh -c "curl -s example.com"` fails (no network path).
 
