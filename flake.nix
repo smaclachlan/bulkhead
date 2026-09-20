@@ -465,6 +465,55 @@
             '');
           };
 
+          # Wipes memory-mcp's knowledge-graph volume (docs/adr/0002-phase-2-
+          # isolation-ux-memory.md Decision 4) and recreates it fresh -
+          # permanently deletes every entity/relation/observation stored so
+          # far. Simpler than reset-repo: there's no remote to re-clone
+          # from, this is just a wipe. A fresh volume also happens to be the
+          # fastest fix for the pre-existing-volume/non-root-user ownership
+          # issue memory-mcp/docker-entrypoint.sh exists to handle
+          # otherwise - Docker only seeds a *brand-new* volume's ownership
+          # from the image. Usage: nix run .#reset-memory -- [env-file]
+          # [--yes] (same profile/--yes convention as reset-repo.)
+          reset-memory = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "bulkhead-reset-memory" ''
+              set -euo pipefail
+              if [ ! -f flake.nix ] || [ ! -f docker-compose.yml ]; then
+                echo "run this from the bulkhead repo root (flake.nix/docker-compose.yml not found in $PWD)" >&2
+                exit 1
+              fi
+              yes=""
+              env_file=".env"
+              for arg in "$@"; do
+                case "$arg" in
+                  --yes) yes="1" ;;
+                  *) env_file="$arg" ;;
+                esac
+              done
+              if [ ! -f "$env_file" ]; then
+                echo "env file '$env_file' not found" >&2
+                exit 1
+              fi
+              . scripts/lib/profile.sh
+              bulkhead_resolve_profile "$env_file" || exit 1
+              project_name="$BULKHEAD_PROJECT_NAME"
+              memory_volume="''${project_name}_memory-data"
+              dc() { ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" "$@"; }
+
+              if [ -z "$yes" ]; then
+                printf 'This permanently destroys the "%s" volume (every entity/relation/observation memory-mcp has stored - there is no remote to recover it from). Type "yes" to continue: ' "$memory_volume" >&2
+                read -r confirm
+                [ "$confirm" = "yes" ] || { echo "aborted" >&2; exit 1; }
+              fi
+
+              echo "== Stopping memory-mcp, wiping $memory_volume, recreating fresh ==" >&2
+              dc stop memory-mcp
+              ${pkgs.docker}/bin/docker volume rm "$memory_volume"
+              dc up -d --force-recreate memory-mcp
+            '');
+          };
+
           # Reclaims disk from superseded image builds - every `nix run
           # .#up`/build-*-image rebuild that changes anything retags its
           # image, leaving the previous build's now-untagged ("dangling")

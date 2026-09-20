@@ -136,14 +136,15 @@ Every image `nix run .#up`/the `build-*-image` apps build carries a `bulkhead=1`
 
 ### Resetting the workspace
 
-Two commands, two different amounts of destruction:
+Three commands, three different amounts of destruction:
 
 ```
 nix run .#reset-workspace -- [env-file]    # fresh container, /repo untouched
 nix run .#reset-repo -- [env-file] [--yes] # also wipes /repo and git-mcp's gateway mirror - asks to confirm
+nix run .#reset-memory -- [env-file] [--yes] # wipes memory-mcp's knowledge graph - asks to confirm
 ```
 
-`reset-workspace` recreates the `workspace` container from its current image - undoes anything the agent changed inside the container itself (installed packages, `/tmp` files, etc.) without touching its working tree. `reset-repo` goes further: it also deletes the `workspace-repo` volume and `git-mcp`'s own `git-gateway-data` volume (two separate volumes since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), previously one shared one) so both re-clone from the remote on next start - this destroys any uncommitted or unpushed local work, so it asks for a typed `yes` first (`--yes` skips that, for scripted use). Both take the same optional profile path as `down`/`git-unlock`.
+`reset-workspace` recreates the `workspace` container from its current image - undoes anything the agent changed inside the container itself (installed packages, `/tmp` files, etc.) without touching its working tree. `reset-repo` goes further: it also deletes the `workspace-repo` volume and `git-mcp`'s own `git-gateway-data` volume (two separate volumes since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), previously one shared one) so both re-clone from the remote on next start - this destroys any uncommitted or unpushed local work, so it asks for a typed `yes` first (`--yes` skips that, for scripted use). `reset-memory` wipes memory-mcp's `memory-data` volume and recreates the container fresh - simpler than `reset-repo` since there's no remote to re-clone from, it's just a permanent wipe of every entity/relation/observation stored so far, same confirmation convention. All three take the same optional profile path as `down`/`git-unlock`.
 
 ### Profiles - running multiple concurrent stacks
 
