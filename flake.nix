@@ -477,7 +477,11 @@
                   [ "$confirm" = "yes" ] || { echo "aborted" >&2; exit 1; }
                 fi
                 echo "== Stopping git-mcp, wiping $gateway_volume, recreating fresh ==" >&2
-                dc stop git-mcp
+                # `dc stop` alone isn't enough - a stopped-but-not-removed
+                # container still counts as "in use" to the volume it was
+                # mounted with, and `docker volume rm` fails outright.
+                # `rm -sf` (stop then remove) actually detaches it.
+                dc rm -sf git-mcp
                 ${pkgs.docker}/bin/docker volume rm "$gateway_volume"
                 dc up -d --force-recreate git-mcp
                 # orchestrator holds a persistent MCP connection to git-mcp
@@ -499,7 +503,9 @@
               fi
 
               echo "== Stopping workspace/git-mcp, wiping $repo_volume and $gateway_volume, recreating fresh ==" >&2
-              dc stop workspace git-mcp
+              # See the WORKSPACE_HOST_PATH branch above - `rm -sf`, not
+              # `stop`, actually detaches the container from the volume.
+              dc rm -sf workspace git-mcp
               ${pkgs.docker}/bin/docker volume rm "$repo_volume" "$gateway_volume"
               dc up -d --force-recreate workspace git-mcp
               # See the WORKSPACE_HOST_PATH branch above - git-mcp being
@@ -556,7 +562,9 @@
               fi
 
               echo "== Stopping memory-mcp, wiping $memory_volume, recreating fresh ==" >&2
-              dc stop memory-mcp
+              # See reset-repo above - `rm -sf`, not `stop`, actually
+              # detaches the container from the volume before removing it.
+              dc rm -sf memory-mcp
               ${pkgs.docker}/bin/docker volume rm "$memory_volume"
               dc up -d --force-recreate memory-mcp
               # orchestrator holds a persistent MCP connection to memory-mcp
