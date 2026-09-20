@@ -110,10 +110,18 @@ async def export_bundle(refspec: str) -> dict:
     matching `refspec` yet (e.g. no commits) fails with a clear non-zero
     exit_code - the caller should treat that as "nothing to sync", not an
     error."""
+    # `docker exec` runs at the container's default working directory (`/`,
+    # unset in workspace/default.nix), not WORKSPACE_REPO_PATH - confirmed
+    # live this was always silently syncing the wrong (empty, `/`-level)
+    # repo rather than /repo's real content: `git init -q` at `/` used to
+    # succeed as root (pre-privilege-drop), masking this as "nothing to
+    # export yet" every time rather than a real error; as the non-root user
+    # it fails outright since `/` isn't writable, which is what actually
+    # surfaced this. `cd` into the real path first, always - fixes both.
     argv = [
         "docker", "exec", WORKSPACE_CONTAINER_ID, "sh", "-c",
-        'git init -q >/dev/null 2>&1; git bundle create - "$1"',
-        "_", refspec,
+        'cd "$1" || exit 1; git init -q >/dev/null 2>&1; git bundle create - "$2"',
+        "_", WORKSPACE_REPO_PATH, refspec,
     ]
     try:
         result = await asyncio.to_thread(
@@ -125,10 +133,16 @@ async def export_bundle(refspec: str) -> dict:
     except subprocess.TimeoutExpired:
         return {"data_b64": "", "stderr": "export_bundle timed out", "exit_code": -1}
 
-    print(f"[workspace-mcp] export_bundle {refspec!r} exit={result.returncode}")
+    stderr = _decode(result.stderr)
+    # A non-zero exit here is routinely the benign "nothing to export yet"
+    # case (see docstring) - but when it isn't, the exit code alone gives no
+    # way to tell the difference from this log, so include stderr whenever
+    # it's non-zero rather than only in the tool's own return value.
+    detail = f" stderr={stderr.strip()!r}" if result.returncode != 0 and stderr else ""
+    print(f"[workspace-mcp] export_bundle {refspec!r} exit={result.returncode}{detail}")
     return {
         "data_b64": base64.b64encode(result.stdout).decode("ascii"),
-        "stderr": _decode(result.stderr),
+        "stderr": stderr,
         "exit_code": result.returncode,
     }
 
@@ -139,11 +153,13 @@ async def import_bundle(data_b64: str, refspec: str) -> dict:
     `git fetch <that file> <refspec>` against /repo, then remove the temp
     file. `git init`s /repo first if needed, same as export_bundle."""
     raw = base64.b64decode(data_b64) if data_b64 else b""
+    # Same fix as export_bundle above - must `cd` into WORKSPACE_REPO_PATH
+    # first, `docker exec`'s own default cwd is not it.
     argv = [
         "docker", "exec", "-i", WORKSPACE_CONTAINER_ID, "sh", "-c",
-        'git init -q >/dev/null 2>&1; f=$(mktemp); cat > "$f"; '
-        'git fetch --no-tags "$f" "$1"; rc=$?; rm -f "$f"; exit $rc',
-        "_", refspec,
+        'cd "$1" || exit 1; git init -q >/dev/null 2>&1; f=$(mktemp); cat > "$f"; '
+        'git fetch --no-tags "$f" "$2"; rc=$?; rm -f "$f"; exit $rc',
+        "_", WORKSPACE_REPO_PATH, refspec,
     ]
     try:
         result = await asyncio.to_thread(
@@ -156,10 +172,15 @@ async def import_bundle(data_b64: str, refspec: str) -> dict:
     except subprocess.TimeoutExpired:
         return {"stdout": "", "stderr": "import_bundle timed out", "exit_code": -1}
 
-    print(f"[workspace-mcp] import_bundle {refspec!r} exit={result.returncode}")
+    stderr = _decode(result.stderr)
+    # Same reasoning as export_bundle above - a 128 here is routinely
+    # benign too (an empty bundle being "imported" is how /repo first gets
+    # git-init'd, see docstring), so surface stderr whenever it's non-zero.
+    detail = f" stderr={stderr.strip()!r}" if result.returncode != 0 and stderr else ""
+    print(f"[workspace-mcp] import_bundle {refspec!r} exit={result.returncode}{detail}")
     return {
         "stdout": _decode(result.stdout),
-        "stderr": _decode(result.stderr),
+        "stderr": stderr,
         "exit_code": result.returncode,
     }
 

@@ -252,6 +252,17 @@ class GitState:
         # above already forces this on every invocation regardless of what's
         # on disk - see this module's docstring.
         await self._run_gateway_git("config", "core.hooksPath", "/dev/null")
+        # `clone --mirror` also sets remote.origin.mirror=true, which then
+        # makes git refuse *any* push with an explicit refspec ("fatal:
+        # --mirror can't be combined with refspecs") - confirmed live as
+        # push_execute's actual failure mode below. That restriction is the
+        # only thing `mirror=true` adds on top of what we already want
+        # (clone also sets remote.origin.fetch=+refs/*:refs/* independently,
+        # which is what fetch() above actually relies on and this leaves
+        # alone) - literal "origin", matching the clone command above (which
+        # doesn't pass `-o`/`--origin`, so it's always "origin" regardless
+        # of GIT_REMOTE_NAME).
+        await self._run_gateway_git("config", "remote.origin.mirror", "false")
         print("[git-mcp] mirror clone complete")
 
     # -- LLM-facing tools -----------------------------------------------------

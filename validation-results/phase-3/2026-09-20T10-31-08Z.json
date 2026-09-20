@@ -1,8 +1,8 @@
 {
   "phase": "phase-3",
-  "timestamp_utc": "2026-09-20T12-11-19Z",
+  "timestamp_utc": "2026-09-20T10-31-08Z",
   "git_commit": "a88e705641103bae3fd016465571fc31e7fc27ba",
-  "git_dirty": true,
+  "git_dirty": false,
   "project": "bulkhead",
   "checks": [
     {
@@ -93,19 +93,19 @@
       "id": "step9.push-not-immediate",
       "status": "pass",
       "description": "push_request stages without pushing",
-      "detail": "refs/heads/agent/bulkhead-validate-deny-1789906241 absent on the remote immediately after push_request"
+      "detail": "refs/heads/agent/bulkhead-validate-deny-1789900220 absent on the remote immediately after push_request"
     },
     {
       "id": "step9.deny-cancels-and-blocks-reapproval",
       "status": "pass",
       "description": "deny cancels a pending push and blocks re-approval",
-      "detail": "remote still absent after deny, and approving the same id afterward was rejected: Push failed (exit -1): | no pending push request '3e92c44ae5752619' (unknown, expired, or already executed)"
+      "detail": "remote still absent after deny, and approving the same id afterward was rejected: Push failed (exit -1): | no pending push request '071003a13e85227a' (unknown, expired, or already executed)"
     },
     {
       "id": "step9.approve-pushes-to-remote",
       "status": "fail",
       "description": "approve actually pushes to the remote",
-      "detail": "refs/heads/agent/bulkhead-validate-approve-1789906257 not found on remote after approve: "
+      "detail": "refs/heads/agent/bulkhead-validate-approve-1789900237 not found on remote after approve: "
     },
     {
       "id": "step10.gateway-is-bare",
