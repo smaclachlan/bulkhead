@@ -40,6 +40,8 @@ nix run .#up
 
 This builds every container image (the Workspace image via Nix, everything else via `docker build`) and brings the stack up detached. It prints the Chat UI's URL (with its access token) once `chat-mcp` is ready, and re-runs `git-mcp-unlock` automatically if a passphrase-protected deploy key needs unlocking.
 
+**Rebuilt an image but the running container didn't pick it up?** `nix run .#up` doesn't force-recreate already-running containers, and that's confirmed live to not always be enough to pick up a rebuilt image for a container that was already running under the same tag (e.g. after a Dockerfile change). A bare second `nix run .#up` is not reliably equivalent to a fresh one. `nix run .#down` then `nix run .#up` always works - `down` removes the containers outright, so the next `up` has nothing stale to compare against - and is the simplest fix. `reset-workspace`/`reset-repo`/`reset-memory` (below) are the targeted alternative when you only need to recreate one container - all three (except `reset-workspace`, see below) also restart `orchestrator` for you, since it holds a long-lived MCP connection per dependency that goes stale the moment the container behind it is recreated without orchestrator itself restarting too (confirmed live as a `400 Bad Request` on the next call). `nix run .#up` itself now unconditionally restarts `orchestrator` as its last step too, for the same reason - whatever Compose did or didn't recreate, this guarantees fresh connections regardless.
+
 **What's running** (see [Architecture & Design](#architecture--design) for why it's split this way):
 
 | Container | Role |
@@ -145,6 +147,8 @@ nix run .#reset-memory -- [env-file] [--yes] # wipes memory-mcp's knowledge grap
 ```
 
 `reset-workspace` recreates the `workspace` container from its current image - undoes anything the agent changed inside the container itself (installed packages, `/tmp` files, etc.) without touching its working tree. `reset-repo` goes further: it also deletes the `workspace-repo` volume and `git-mcp`'s own `git-gateway-data` volume (two separate volumes since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), previously one shared one) so both re-clone from the remote on next start - this destroys any uncommitted or unpushed local work, so it asks for a typed `yes` first (`--yes` skips that, for scripted use). `reset-memory` wipes memory-mcp's `memory-data` volume and recreates the container fresh - simpler than `reset-repo` since there's no remote to re-clone from, it's just a permanent wipe of every entity/relation/observation stored so far, same confirmation convention. All three take the same optional profile path as `down`/`git-unlock`.
+
+`reset-repo` and `reset-memory` both also restart `orchestrator` as their last step. Not optional cleanup - `orchestrator` holds a long-lived MCP connection to each of `workspace-mcp`/`memory-mcp`/`git-mcp` (see its own startup log: `"<name>: Up and running with a persistent connection!"`), and that connection goes stale the moment the container behind it is recreated rather than just restarted in place - confirmed live as a `400 Bad Request` on the next call to it. `reset-workspace` doesn't need this: it only recreates `workspace`, which `orchestrator` never talks to directly (only `workspace-mcp`, which it leaves alone).
 
 ### Profiles - running multiple concurrent stacks
 

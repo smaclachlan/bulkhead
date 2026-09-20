@@ -1,7 +1,7 @@
 {
   "phase": "phase-2",
-  "timestamp_utc": "2026-09-20T10-05-10Z",
-  "git_commit": "5938dad1d649730d6468e441669cf71f02ae4a9d",
+  "timestamp_utc": "2026-09-20T09-45-37Z",
+  "git_commit": "58fe8d702171f8c831d603aca3636c0a6c4660dc",
   "git_dirty": true,
   "project": "bulkhead",
   "checks": [
@@ -51,7 +51,7 @@
       "id": "step3.presence-advances",
       "status": "pass",
       "description": "last_seen advances between polls",
-      "detail": "1789898567.5873086 -> 1789898627.6035044"
+      "detail": "1789897397.4761634 -> 1789897427.4840899"
     },
     {
       "id": "step3.activity-sequence",
@@ -63,25 +63,25 @@
       "id": "step4.cli-roundtrip",
       "status": "pass",
       "description": "chat_mcp.cli send --wait round-tripped a real reply",
-      "detail": "bulkhead-cli-check-1789898635"
+      "detail": "bulkhead-cli-check-1789897453"
     },
     {
       "id": "step5.tool-use-through-proxy",
       "status": "pass",
       "description": "real exec via docker-socket-proxy reflected in reply",
-      "detail": "reply contained 'bulkhead-proxy-check-1789898637'"
+      "detail": "reply contained 'bulkhead-proxy-check-1789897456'"
     },
     {
       "id": "step6.memory-write",
-      "status": "pass",
+      "status": "fail",
       "description": "wrote a marker entity into memory-mcp",
-      "detail": ""
+      "detail": "{\"ok\": false}"
     },
     {
       "id": "step6.memory-survives-restart",
-      "status": "pass",
+      "status": "fail",
       "description": "marker entity survived a memory-mcp container restart",
-      "detail": "{\"text\": \"{\\n  \\\"entities\\\": [\\n    {\\n      \\\"name\\\": \\\"bulkhead-memory-check-1789898642\\\",\\n      \\\"entityType\\\": \\\"validation-check\\\",\\n      \\\"observations\\\": [\\n        \\\"written by scripts/validate-phase2.sh\\\"\\n      ]\\n    }\\n  ],\\n  \\\"relations\\\": []\\n}\"}"
+      "detail": "{\"text\": \"{\\n  \\\"entities\\\": [],\\n  \\\"relations\\\": []\\n}\"}"
     },
     {
       "id": "step7.cross-session-recall",
@@ -109,8 +109,8 @@
     }
   ],
   "summary": {
-    "pass": 16,
-    "fail": 1,
+    "pass": 14,
+    "fail": 3,
     "skip": 0,
     "total": 17
   }

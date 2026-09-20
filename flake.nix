@@ -244,6 +244,17 @@
               ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label -t bulkhead-git-mcp:dev git-mcp
 
               echo "== Starting docker compose (detached) ==" >&2
+              # No --force-recreate: leaves already-running containers whose
+              # config Compose considers unchanged alone. Confirmed live
+              # that this isn't reliably enough to pick up a rebuilt image
+              # for an already-running container of the same tag (e.g.
+              # after a Dockerfile privilege/entrypoint change) - a second
+              # plain `up` right after the rebuild above can silently keep
+              # the old container running. `nix run .#down` then `nix run
+              # .#up` always works (down removes the containers outright,
+              # so the next up has nothing stale to compare against) - see
+              # README's Quick start note. reset-workspace/reset-repo/
+              # reset-memory are the targeted single-container alternative.
               dc up -d
 
               # git-mcp-unlock self-skips when there's nothing to unlock
@@ -268,6 +279,22 @@
               # works; a failed/declined/unnecessary unlock shouldn't fail
               # `up` itself, hence the `|| true`.
               dc exec git-mcp git-mcp-unlock || true
+
+              # Unconditional, not just after a fresh bring-up: `dc up -d`
+              # above has no --force-recreate, so on a *second* `up` (e.g.
+              # after rebuilding just one image) Compose may recreate some
+              # containers and leave others - including orchestrator itself
+              # - running as-is. orchestrator holds a persistent MCP
+              # connection per dependency (workspace-mcp/memory-mcp/git-mcp)
+              # that goes stale the moment the container behind it is
+              # recreated without orchestrator also restarting - confirmed
+              # live as a 400 Bad Request on the next call to it (same
+              # reasoning as reset-repo/reset-memory's own orchestrator
+              # restart, below). Restarting it here on every `up` is cheap
+              # (it has no state of its own to lose) and removes the need
+              # to know or care what Compose did or didn't recreate.
+              echo "== Restarting orchestrator so its MCP connections are fresh ==" >&2
+              dc restart orchestrator
 
               # chat-mcp prints its (freshly-generated-per-boot, unless
               # CHAT_MCP_TOKEN is pinned in .env) URL+token to its own stdout
@@ -388,6 +415,12 @@
               bulkhead_resolve_profile "$env_file" || exit 1
               project_name="$BULKHEAD_PROJECT_NAME"
               echo "== Recreating workspace (project: $project_name) - /repo is untouched ==" >&2
+              # Deliberately no orchestrator restart here, unlike reset-repo/
+              # reset-memory below: orchestrator's persistent MCP
+              # connections are to the *-mcp servers, not to `workspace`
+              # itself - workspace-mcp (what it actually talks to) isn't
+              # touched by this command, so there's no stale connection to
+              # refresh.
               exec ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" up -d --force-recreate workspace
             '');
           };
@@ -447,6 +480,13 @@
                 dc stop git-mcp
                 ${pkgs.docker}/bin/docker volume rm "$gateway_volume"
                 dc up -d --force-recreate git-mcp
+                # orchestrator holds a persistent MCP connection to git-mcp
+                # (see its own startup log) that goes stale the moment
+                # git-mcp is recreated - confirmed live as a 400 Bad
+                # Request on the next call. Restart it too so that
+                # connection is fresh; it has no state of its own to lose.
+                echo "== Restarting orchestrator so its connection to git-mcp is fresh ==" >&2
+                dc restart orchestrator
                 exit 0
               fi
 
@@ -462,6 +502,14 @@
               dc stop workspace git-mcp
               ${pkgs.docker}/bin/docker volume rm "$repo_volume" "$gateway_volume"
               dc up -d --force-recreate workspace git-mcp
+              # See the WORKSPACE_HOST_PATH branch above - git-mcp being
+              # recreated goes stale in orchestrator's persistent MCP
+              # connection to it either way. workspace itself isn't an MCP
+              # server orchestrator ever connects to directly (only
+              # workspace-mcp is, which this doesn't touch), so this is
+              # only needed because of git-mcp.
+              echo "== Restarting orchestrator so its connection to git-mcp is fresh ==" >&2
+              dc restart orchestrator
             '');
           };
 
@@ -511,6 +559,13 @@
               dc stop memory-mcp
               ${pkgs.docker}/bin/docker volume rm "$memory_volume"
               dc up -d --force-recreate memory-mcp
+              # orchestrator holds a persistent MCP connection to memory-mcp
+              # (see its own startup log) that goes stale the moment
+              # memory-mcp is recreated - confirmed live as a 400 Bad
+              # Request on the next memory_* call. Restart it too so that
+              # connection is fresh; it has no state of its own to lose.
+              echo "== Restarting orchestrator so its connection to memory-mcp is fresh ==" >&2
+              dc restart orchestrator
             '');
           };
 
