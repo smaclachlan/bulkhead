@@ -162,20 +162,35 @@ def cmd_send(args: argparse.Namespace, base: str, token: str) -> None:
     # final reply text (e.g. `nix run .#chat -- send "hi" --wait > reply.txt`
     # stays clean), and this is otherwise silent for up to --timeout with no
     # sign anything is happening.
+    #
+    # Erased in place (cursor up + clear line) once superseded by a newer
+    # status or by the reply itself - safe here, unlike repl's version of
+    # this below: this is a single-threaded blocking loop, nothing else is
+    # writing to the terminal or reading stdin concurrently, so there's no
+    # question of what's currently on that line. Skipped when stderr isn't
+    # a real terminal (redirected to a file/pipe) - the escape codes would
+    # just be garbage bytes there, not an erase.
+    can_erase = sys.stderr.isatty()
     last_status = None
+    status_shown = False
     while time.time() < deadline:
         try:
             status = _get(base, "/api/status", token).get("status")
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
             status = None
         if status != last_status and _ACTIVITY_LABELS.get(status):
+            if can_erase and status_shown:
+                print("\033[1A\033[2K", end="", file=sys.stderr)
             print(f"({_ACTIVITY_LABELS[status]})", file=sys.stderr)
+            status_shown = True
         last_status = status
 
         data = _get(base, f"/api/messages?since={since}", token)
         for m in data["messages"]:
             since = max(since, m["id"])
             if m["role"] != "user":
+                if can_erase and status_shown:
+                    print("\033[1A\033[2K", end="", file=sys.stderr)
                 print(f"[{_format_ts(m['ts'])}] {_format_reply(m['text'])}")
                 return
         time.sleep(1)
