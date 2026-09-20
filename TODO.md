@@ -6,3 +6,4 @@
 - Easy switching between models/agents - list of supported backends?
 - Claude OAUTH... Will this be possible?
 - Batch or concurrent commands from agent to Workspace?  Look at speeding up commands/multiple agents running at once
+- Investigate using Claude Code in the orchestrator instead of MCP-Agent
