@@ -5,6 +5,15 @@ Attestation trail produced by `scripts/validate-<phase>.sh`
 appends a timestamped JSON record under `<phase>/`, plus overwrites
 `<phase>/latest.json` for convenience.
 
+`scripts/validate-workspace-bind-mount.sh` writes here too, under
+`workspace-bind-mount/`, in the same TSV-then-JSON style - but it isn't a
+phase (no ADR, no `docs/plans/phase-N-*.md`), just a small standalone
+harness for the `WORKSPACE_HOST_PATH`/`WORKSPACE_USER` bind-mount option
+(docker-compose.yml, `.env.example`). Its records use `"harness"` instead
+of `"phase"` as the top-level key, to make that distinction obvious at a
+glance - everything else below (record shape, `"skip"`, the profile
+nesting) is identical.
+
 These are committed to git deliberately - the point is a durable, append-only
 record of when the containment properties in
 `docs/adr/0001-phase-1-four-container-architecture.md` were actually checked

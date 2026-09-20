@@ -1,0 +1,41 @@
+# Test profile for WORKSPACE_HOST_PATH/WORKSPACE_USER (docker-compose.yml,
+# .env.example) - exercises the auto-detect path: WORKSPACE_USER is left
+# unset here, so `nix run .#up` should fill it in with your own `id -u`:
+# `id -g` because WORKSPACE_HOST_PATH is set below. See
+# scripts/validate-workspace-bind-mount.sh, which checks this.
+#
+# SECURITY WARNING - read .env.example's own WORKSPACE_HOST_PATH comment
+# before pointing this at anything but a disposable scratch directory:
+# it's a bind mount into the one container that runs agent-issued shell
+# commands unreviewed, so the agent gets real read/write access to
+# whatever host path you set here. This profile defaults to
+# .bind-mount-scratch/auto specifically because that's throwaway - if you
+# copy this as a starting point for a real profile, don't reuse a
+# directory you care about.
+#
+# Usage (from the repo root):
+#
+#   cp scripts/test-profiles/bind-mount-auto.conf.example ./bind-mount-auto.conf
+#   mkdir -p .bind-mount-scratch/auto
+#   # fill in ANTHROPIC_API_KEY below (blank is fine if you're only running
+#   # validate-workspace-bind-mount.sh, not a full phase-*.sh script)
+#   nix run .#up -- ./bind-mount-auto.conf
+#   sh scripts/validate-workspace-bind-mount.sh ./bind-mount-auto.conf
+#   nix run .#down -- ./bind-mount-auto.conf
+#
+# The `mkdir -p` before `up` matters: if WORKSPACE_HOST_PATH doesn't
+# already exist when the stack comes up, Docker creates it itself -
+# usually root-owned - which defeats the point of auto-detecting your own
+# uid:gid, since the directory would need root to write to it either way.
+# Create it yourself first so it's already owned by you.
+#
+# ./bind-mount-auto.conf (once copied) is gitignored, same as .env - this
+# .example template is the only copy meant to be committed.
+
+ANTHROPIC_API_KEY=
+
+WORKSPACE_HOST_PATH=./.bind-mount-scratch/auto
+WORKSPACE_REPO_PATH=/repo
+# Left unset on purpose - this profile is specifically testing the
+# auto-default path.
+WORKSPACE_USER=

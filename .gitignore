@@ -7,3 +7,9 @@ result
 result-*
 .env
 *.secrets.yaml
+# scripts/test-profiles/bind-mount-*.conf.example, copied to the repo root
+# and filled in with a real ANTHROPIC_API_KEY per their own header comment -
+# same treatment as .env. Their scratch WORKSPACE_HOST_PATH target too. See
+# scripts/validate-workspace-bind-mount.sh.
+/bind-mount-*.conf
+.bind-mount-scratch/

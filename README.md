@@ -86,7 +86,7 @@ The default Workspace image (`workspace/default.nix`) is deliberately minimal - 
 
 - `WORKSPACE_DOCKERFILE_DIR` - a directory containing your own Dockerfile. When set, `nix run .#up` builds it as the Workspace image instead of the Nix one. Whatever that image's own `CMD`/`ENTRYPOINT` is, it never runs - `docker-compose.yml` overrides the container's command to just idle (`sh -c "sleep infinity"`), since `workspace-mcp` only ever `docker exec`s into it, never `docker run`s per command. This means the image needs a POSIX shell and `sleep` present; essentially any real base distro has both. Since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), it also needs `git` for local git ops to work at all, and benefits from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` set (see `workspace/default.nix` for the defaults the Nix image uses) so `git commit` has an identity to commit as without any interactive `git config`.
 - `WORKSPACE_REPO_PATH` - where the working tree (a volume exclusive to `workspace` - `git-mcp` never mounts it, see ADR-0004) is mounted. Defaults to `/repo`; override it if your Dockerfile's tooling expects the project root somewhere else.
-- `WORKSPACE_HOST_PATH` - by default the working tree lives in an internal-only Docker-managed named volume; set this to a host directory to bind-mount it there instead (e.g. a large existing checkout you don't want to `git clone` into the volume from scratch). This is a deliberate security relaxation - the container, and anything a compromised build/test/hook run inside it does, then has direct read/write access to that host path, not just an isolated volume. Leave unset unless you need it.
+- `WORKSPACE_HOST_PATH` - **security warning, read before setting this.** By default the working tree lives in an internal-only Docker-managed named volume - `workspace` is the one container that runs agent-issued shell commands with no human review (workspace-mcp's `exec` tool, README point 4), and that volume contains the blast radius of a wrong or malicious command (or a hostile git hook a checkout triggers) to itself; it cannot touch the host. Setting `WORKSPACE_HOST_PATH` to a host directory bind-mounts it there instead (e.g. for a large existing checkout you don't want to `git clone` into the volume from scratch) and removes that containment - every such command gets real read/write access to whatever host path you point it at, same as if you'd run it yourself from a terminal. Point it at exactly the one directory you're willing to have agent-run commands modify or delete, never anything broader (your home directory, a path with unrelated projects/data in it). Leave unset unless you specifically need it.
 - `WORKSPACE_USER` - the `UID[:GID]` the Workspace container runs as (Docker's own `user` syntax, e.g. `1000:1000`), overriding the image's own baked-in user without a rebuild. Only matters alongside `WORKSPACE_HOST_PATH`: a bind-mounted host directory keeps its host-side ownership, so the container's user needs to match it or reads/writes fail. Leave unset - `nix run .#up` auto-fills it with your own `id -u`:`id -g` whenever `WORKSPACE_HOST_PATH` is set, so this is only worth setting explicitly to run as someone else (a CI account, or to match a custom `WORKSPACE_DOCKERFILE_DIR` image's own non-root user).
 
 One thing this doesn't solve for you: if your custom image runs as a non-root user (the default Nix image now does too - see `workspace/default.nix`), check that user can actually read/write this path, or `git init`/`git commit` inside it will fail with permission errors rather than an obvious "wrong config" message. This matters more with `WORKSPACE_HOST_PATH` set - a bind-mounted directory keeps its host-side ownership, unlike the named-volume default, which the image pre-chowns - `WORKSPACE_USER` above is how you fix that without rebuilding anything.
@@ -256,6 +256,16 @@ sh scripts/check-mcp-allowlist.sh      # every MCP server exposes exactly its in
 ```
 
 All three need a valid `ANTHROPIC_API_KEY` (several steps drive real chat turns) and, like `nix run .#up`/`down`/`git-unlock`, take an optional profile env-file argument to target a non-default concurrent profile instead of assuming `.env` (e.g. `sh scripts/validate-phase2.sh ./rust-build.conf`) - see [Profiles](#profiles---running-multiple-concurrent-stacks).
+
+`scripts/validate-workspace-bind-mount.sh` is a smaller, standalone harness (same attestation format, under `validation-results/workspace-bind-mount/`) for `WORKSPACE_HOST_PATH`/`WORKSPACE_USER` specifically - it doesn't need `ANTHROPIC_API_KEY` at all, since it only touches the `workspace` container directly. `scripts/test-profiles/bind-mount-*.conf.example` are ready-made profiles for it - copy one per its own header comment, bring it up, then run the harness against it, e.g.:
+
+```
+cp scripts/test-profiles/bind-mount-auto.conf.example ./bind-mount-auto.conf
+mkdir -p .bind-mount-scratch/auto
+nix run .#up -- ./bind-mount-auto.conf
+sh scripts/validate-workspace-bind-mount.sh ./bind-mount-auto.conf
+nix run .#down -- ./bind-mount-auto.conf
+```
 
 ## Architecture & Design
 

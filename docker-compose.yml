@@ -116,14 +116,22 @@ services:
     # WORKSPACE_HOST_PATH to a host directory instead (e.g. for a large
     # existing checkout you don't want to `git clone` into the volume) and
     # Compose's short-syntax volume source switches from a named volume to
-    # a bind mount, same ambiguity Compose always resolves this way. This is
-    # a deliberate security relaxation: the container (and anything a
-    # compromised build/test/hook run in it does) then has read/write access
-    # to that host path, not just an isolated Docker-managed volume. Also
-    # note this container runs as a fixed non-root UID (workspace/default.nix)
-    # - a bind-mounted host directory keeps its host-side ownership, which
-    # that UID may not have write access to; the named-volume default has no
-    # such issue since the image pre-chowns it. See WORKSPACE_USER below.
+    # a bind mount, same ambiguity Compose always resolves this way.
+    #
+    # SECURITY WARNING: `workspace` is the one container that runs
+    # agent-issued shell commands with no human review (workspace-mcp's
+    # `exec` tool). The named-volume default contains the blast radius of a
+    # wrong/malicious command (or a hostile git hook) to that disposable
+    # volume - it cannot touch the host. WORKSPACE_HOST_PATH removes that
+    # containment: every such command gets real read/write access to
+    # whatever host directory you point it at. See .env.example's own
+    # WORKSPACE_HOST_PATH comment before setting it.
+    #
+    # Also note this container runs as a fixed non-root UID
+    # (workspace/default.nix) - a bind-mounted host directory keeps its
+    # host-side ownership, which that UID may not have write access to; the
+    # named-volume default has no such issue since the image pre-chowns it.
+    # See WORKSPACE_USER below.
     volumes:
       - ${WORKSPACE_HOST_PATH:-workspace-repo}:${WORKSPACE_REPO_PATH:-/repo}
     # Empty by default - Docker then falls back to the image's own user

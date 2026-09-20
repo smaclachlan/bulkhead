@@ -1,0 +1,41 @@
+# Companion to bind-mount-auto.conf.example - exercises the *explicit*
+# WORKSPACE_USER path instead of the auto-default one: proves a value
+# already set in the profile is honored as-is and not overwritten by
+# `nix run .#up`'s "fill it in if empty" logic (see the WORKSPACE_USER
+# comment in flake.nix's `up`/`reset-workspace` apps).
+#
+# SECURITY WARNING - read .env.example's own WORKSPACE_HOST_PATH comment
+# before pointing this at anything but a disposable scratch directory:
+# it's a bind mount into the one container that runs agent-issued shell
+# commands unreviewed, so the agent gets real read/write access to
+# whatever host path you set here. This profile defaults to
+# .bind-mount-scratch/explicit-user specifically because that's
+# throwaway - if you copy this as a starting point for a real profile,
+# don't reuse a directory you care about.
+#
+# Usage (from the repo root):
+#
+#   cp scripts/test-profiles/bind-mount-explicit-user.conf.example ./bind-mount-explicit-user.conf
+#   mkdir -p .bind-mount-scratch/explicit-user
+#   id -u; id -g   # note these, or run: printf '%s:%s\n' "$(id -u)" "$(id -g)"
+#   # paste that as WORKSPACE_USER below - it has to be your own uid:gid
+#   # (or whoever's going to own .bind-mount-scratch/explicit-user), or the
+#   # write check in validate-workspace-bind-mount.sh will correctly fail
+#   # with a permission error, same as any other uid/host-directory mismatch
+#   # would.
+#   # fill in ANTHROPIC_API_KEY below too (blank is fine if you're only
+#   # running validate-workspace-bind-mount.sh)
+#   nix run .#up -- ./bind-mount-explicit-user.conf
+#   sh scripts/validate-workspace-bind-mount.sh ./bind-mount-explicit-user.conf
+#   nix run .#down -- ./bind-mount-explicit-user.conf
+#
+# ./bind-mount-explicit-user.conf (once copied) is gitignored, same as
+# .env - this .example template is the only copy meant to be committed.
+
+ANTHROPIC_API_KEY=
+
+WORKSPACE_HOST_PATH=./.bind-mount-scratch/explicit-user
+WORKSPACE_REPO_PATH=/repo
+# Fill in with your own `id -u`:`id -g` (see above) - deliberately set
+# explicitly rather than left for auto-detect.
+WORKSPACE_USER=
