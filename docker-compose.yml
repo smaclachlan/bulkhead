@@ -208,6 +208,18 @@ services:
       # docker-socket-proxy's filtered API instead of the host daemon
       # directly. See ADR-0002 §3 above.
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      # Both consumed once at startup to `chown` /repo before serving any
+      # exec calls (server.py's _bootstrap_repo_ownership) - an *existing*
+      # workspace-repo volume from before workspace/default.nix's non-root
+      # user keeps its old root ownership across an image rebuild, same
+      # class of bug memory-mcp's docker-entrypoint.sh exists to fix, just
+      # triggered from here instead since `workspace`'s own top-level
+      # process is deliberately just `sleep infinity` with no startup hook
+      # of its own. Mirrors the `workspace` service's own WORKSPACE_USER
+      # default exactly, so this always targets whatever uid:gid `docker
+      # exec` into that container actually runs agent commands as.
+      - WORKSPACE_REPO_PATH=${WORKSPACE_REPO_PATH:-/repo}
+      - WORKSPACE_TARGET_USER=${WORKSPACE_USER:-10001:10001}
     depends_on:
       - workspace
       - docker-socket-proxy

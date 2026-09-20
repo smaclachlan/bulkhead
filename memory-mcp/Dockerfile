@@ -25,19 +25,26 @@ RUN npm install --omit=dev
 ENV MEMORY_FILE_PATH=/data/memory.jsonl
 ENV MEMORY_MCP_PORT=8803
 
-# /data must be owned by the non-root user *before* VOLUME is declared -
-# on first run Docker seeds a fresh named volume from whatever's baked into
-# the image at that path, ownership included, so this is what makes the
-# volume writable by `app` rather than root once mounted.
+# /data owned by the non-root user so a *fresh* named volume seeds
+# writable (Docker copies the image's ownership at this path into a new
+# volume on first use) - but that alone isn't enough for an *existing*
+# volume from before this user existed, see docker-entrypoint.sh.
 RUN useradd --system --no-create-home --uid 10001 --shell /usr/sbin/nologin app \
     && mkdir -p /data && chown app:app /data
 VOLUME ["/data"]
-USER app
+
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8803
 
+# Stays root (no USER here, unlike every other image in this repo) so the
+# entrypoint can fix /data's ownership before dropping to `app` itself -
+# see docker-entrypoint.sh for why that's needed on every start, not just
+# baked into the image once.
+#
 # --stateful: default (stateless) mode spawns a new child per request and
 # never reaps it (supergateway issue #108) - leaked processes eventually
 # stop the container accepting connections. Stays on 3.4.3 rather than
 # upgrading since 4.0.0-rc.2 regressed --stateful itself (issue #216).
-CMD ["sh", "-c", "node_modules/.bin/supergateway --stdio 'node_modules/.bin/mcp-server-memory' --outputTransport streamableHttp --stateful --port ${MEMORY_MCP_PORT}"]
+ENTRYPOINT ["docker-entrypoint.sh"]

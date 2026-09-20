@@ -33,6 +33,9 @@ from mcp.server.mcpserver import MCPServer
 WORKSPACE_CONTAINER_ID = os.environ["WORKSPACE_CONTAINER_ID"]
 EXEC_TIMEOUT_SECONDS = int(os.environ.get("WORKSPACE_EXEC_TIMEOUT_SECONDS", "120"))
 BUNDLE_TIMEOUT_SECONDS = int(os.environ.get("WORKSPACE_BUNDLE_TIMEOUT_SECONDS", "120"))
+# Both only consumed by _bootstrap_repo_ownership() below.
+WORKSPACE_REPO_PATH = os.environ.get("WORKSPACE_REPO_PATH", "/repo")
+WORKSPACE_TARGET_USER = os.environ.get("WORKSPACE_TARGET_USER", "10001:10001")
 
 llm_mcp = MCPServer("workspace-mcp", version="0.1.0")
 admin_mcp = MCPServer("workspace-mcp-admin", version="0.1.0")
@@ -161,12 +164,54 @@ async def import_bundle(data_b64: str, refspec: str) -> dict:
     }
 
 
+async def _bootstrap_repo_ownership() -> None:
+    """Fix WORKSPACE_REPO_PATH's ownership before serving any exec calls.
+
+    A *pre-existing* workspace-repo volume (from before workspace/
+    default.nix started baking in a non-root user) keeps its old root
+    ownership across an image rebuild - Docker only seeds a volume's
+    ownership from the image the first time it's created, never
+    retroactively. `-u 0` overrides the exec's user regardless of the
+    container's own configured default, so this works either way. Same
+    class of bug memory-mcp's docker-entrypoint.sh exists to fix, just done
+    from here instead, since `workspace`'s own top-level process is
+    deliberately just `sleep infinity` with no startup hook of its own.
+    Idempotent (chown of an already-correct tree is a cheap no-op) and
+    best-effort - a failure here is logged, not fatal, since it would only
+    reproduce as a normal exec failure a caller can already see and act on.
+    """
+    argv = [
+        "docker", "exec", "-u", "0", WORKSPACE_CONTAINER_ID,
+        "chown", "-R", WORKSPACE_TARGET_USER, WORKSPACE_REPO_PATH,
+    ]
+    # A few retries with a short backoff - `workspace` is a `depends_on`,
+    # not a health-checked dependency, so it can still be finishing its own
+    # startup (image load, `sleep infinity` not running yet) when this
+    # process starts.
+    attempts = 5
+    result = None
+    for attempt in range(1, attempts + 1):
+        result = await asyncio.to_thread(
+            subprocess.run, argv, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            print(f"[workspace-mcp] bootstrap: chowned {WORKSPACE_REPO_PATH} to {WORKSPACE_TARGET_USER}")
+            return
+        if attempt < attempts:
+            await asyncio.sleep(2)
+    print(
+        f"[workspace-mcp] bootstrap: WARNING - could not chown {WORKSPACE_REPO_PATH} "
+        f"to {WORKSPACE_TARGET_USER} after {attempts} attempts: {result.stderr.strip()}"
+    )
+
+
 def main() -> None:
     host = os.environ.get("WORKSPACE_MCP_HOST", "0.0.0.0")
     llm_port = int(os.environ.get("WORKSPACE_MCP_PORT", "8801"))
     admin_port = int(os.environ.get("WORKSPACE_MCP_ADMIN_PORT", "8807"))
 
     async def _run() -> None:
+        await _bootstrap_repo_ownership()
         print(f"[workspace-mcp] LLM-facing tools on :{llm_port}, admin tools on :{admin_port}")
         await asyncio.gather(
             llm_mcp.run_streamable_http_async(host=host, port=llm_port),
