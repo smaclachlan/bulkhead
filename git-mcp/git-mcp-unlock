@@ -66,6 +66,18 @@ if [ -z "$passphrase" ]; then
   exit 1
 fi
 
+# Validate before ever reaching ssh-add - confirmed live that a wrong
+# passphrase otherwise reads as a permanent hang, not a fast, clear
+# failure: ssh-add retries the askpass prompt a few times before giving
+# up, and setsid below (needed to force askpass instead of a direct tty
+# prompt) also makes that whole wait immune to Ctrl-C, since it detaches
+# from this terminal's session entirely. Same check the no-passphrase case
+# above already uses, just with the entered passphrase instead of "".
+if ! ssh-keygen -y -P "$passphrase" -f "$KEY" >/dev/null 2>&1; then
+  echo "wrong passphrase (or a corrupt key) - not calling ssh-add" >&2
+  exit 1
+fi
+
 askpass_script="$(mktemp)"
 trap 'rm -f "$askpass_script"' EXIT
 # ssh-add itself invokes this as SSH_ASKPASS to fetch the passphrase; it
