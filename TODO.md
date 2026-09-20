@@ -2,7 +2,7 @@
 
 Ordered easiest → hardest to execute.
 
-- [mostly done] Drop privileges of all containers - currently all root
+- [done, verified] Drop privileges of all containers - currently all root
   Done: workspace-mcp, chat-mcp, orchestrator, memory-mcp and workspace
   (the default Nix image) all run as non-root now. The first four got
   `USER` in their Dockerfiles (memory-mcp's /data also chowned before
@@ -29,11 +29,13 @@ Ordered easiest → hardest to execute.
       available in the environment this change was made in) risks silently
       breaking the one path `exec` depends on. Needs testing with
       `nix run .#up` before touching.
-  Not yet done for any of the five changed images: verifying the stack
-  actually still comes up (`nix run .#up` / `nix run .#validate-phase1`
-  or similar) - no docker/nix in this environment, so these changes are
-  unverified, workspace's `fakeRootCommands`/`enableFakechroot` build path
-  especially. Run the stack's validation before relying on this.
+  Verified: phases 1/2/3 all now pass green end-to-end (including
+  workspace's `fakeRootCommands`/`enableFakechroot` build path and
+  workspace-mcp's `/repo` bootstrap-chown), after fixing two real
+  regressions the non-root switch surfaced along the way - see git log
+  ("Deal with failed ownership better", "Fix bundle sync wrong-cwd bug and
+  gateway mirror push rejection"). git-mcp and docker-socket-proxy remain
+  root, unchanged from the NOT-changed notes above.
 
 - Investigate using Claude Code in the orchestrator instead of MCP-Agent
   orchestrator/ currently pins `mcp<2` specifically because `mcp-agent`
