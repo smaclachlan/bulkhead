@@ -84,10 +84,10 @@ Every Bulkhead setting lives in one `.env`-format file - copy `.env.example` to 
 
 The default Workspace image (`workspace/default.nix`) is deliberately minimal - coreutils and a shell, nothing else (ADR-0001 §3: a phase-1 simplicity choice, not a security one). Cornerstone 7 always wanted more than that: "any OCI container... with the full build environment for the user's tooling setup." Two `.env` values get you there:
 
-- `WORKSPACE_DOCKERFILE_DIR` - a directory containing your own Dockerfile. When set, `nix run .#up` builds it as the Workspace image instead of the Nix one. Whatever that image's own `CMD`/`ENTRYPOINT` is, it never runs - `docker-compose.yml` overrides the container's command to just idle (`sh -c "sleep infinity"`), since `workspace-mcp` only ever `docker exec`s into it, never `docker run`s per command. This means the image needs a POSIX shell and `sleep` present; essentially any real base distro has both.
-- `WORKSPACE_REPO_PATH` - where the shared working tree (the volume `git-mcp` clones/commits/pushes on the agent's behalf) is mounted inside both `git-mcp` and `workspace`. Defaults to `/repo`; override it if your Dockerfile's tooling expects the project root somewhere else. All three of the mount point, `git-mcp`'s own `GIT_REPO_PATH`, and `workspace`'s mount target read this one value, so they can't drift apart.
+- `WORKSPACE_DOCKERFILE_DIR` - a directory containing your own Dockerfile. When set, `nix run .#up` builds it as the Workspace image instead of the Nix one. Whatever that image's own `CMD`/`ENTRYPOINT` is, it never runs - `docker-compose.yml` overrides the container's command to just idle (`sh -c "sleep infinity"`), since `workspace-mcp` only ever `docker exec`s into it, never `docker run`s per command. This means the image needs a POSIX shell and `sleep` present; essentially any real base distro has both. Since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), it also needs `git` for local git ops to work at all, and benefits from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` set (see `workspace/default.nix` for the defaults the Nix image uses) so `git commit` has an identity to commit as without any interactive `git config`.
+- `WORKSPACE_REPO_PATH` - where the working tree (a volume exclusive to `workspace` - `git-mcp` never mounts it, see ADR-0004) is mounted. Defaults to `/repo`; override it if your Dockerfile's tooling expects the project root somewhere else.
 
-One thing this doesn't solve for you: if your custom image runs as a non-root user, check that user can actually read/write the shared volume - `git-mcp` writes to it as its own container's (root) user, and a UID mismatch will surface as confusing permission errors in your build tooling rather than an obvious "wrong config" message.
+One thing this doesn't solve for you: if your custom image runs as a non-root user, check that user can actually read/write this volume, or `git init`/`git commit` inside it will fail with permission errors rather than an obvious "wrong config" message.
 
 ### Resetting the workspace
 
@@ -95,10 +95,10 @@ Two commands, two different amounts of destruction:
 
 ```
 nix run .#reset-workspace -- [env-file]    # fresh container, /repo untouched
-nix run .#reset-repo -- [env-file] [--yes] # also wipes /repo - asks to confirm
+nix run .#reset-repo -- [env-file] [--yes] # also wipes /repo and git-mcp's gateway mirror - asks to confirm
 ```
 
-`reset-workspace` recreates the `workspace` container from its current image - undoes anything the agent changed inside the container itself (installed packages, `/tmp` files, etc.) without touching the shared working tree. `reset-repo` goes further: it also deletes the `workspace-repo` volume so `git-mcp` re-clones from the remote on next start - this destroys any uncommitted or unpushed local work, so it asks for a typed `yes` first (`--yes` skips that, for scripted use). Both take the same optional profile path as `down`/`git-unlock`.
+`reset-workspace` recreates the `workspace` container from its current image - undoes anything the agent changed inside the container itself (installed packages, `/tmp` files, etc.) without touching its working tree. `reset-repo` goes further: it also deletes the `workspace-repo` volume and `git-mcp`'s own `git-gateway-data` volume (two separate volumes since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), previously one shared one) so both re-clone from the remote on next start - this destroys any uncommitted or unpushed local work, so it asks for a typed `yes` first (`--yes` skips that, for scripted use). Both take the same optional profile path as `down`/`git-unlock`.
 
 ### Profiles - running multiple concurrent stacks
 
@@ -126,7 +126,8 @@ Two things concurrent profiles don't (yet) get their own isolation for:
 
 ### Git MCP setup (phase 3, code egress)
 
-See [ADR-0003](docs/adr/0003-phase-3-git-mcp.md) for the full design. Three
+See [ADR-0003](docs/adr/0003-phase-3-git-mcp.md) and
+[ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md) for the full design. Three
 `.env` values are required before `git-mcp` will start - see
 `.env.example`:
 
@@ -140,13 +141,19 @@ The deploy key should be scoped to that one repo on the remote host (a
 GitHub/GitLab "deploy key", not a personal SSH key) - it's bind-mounted
 read-only into `git-mcp` alone and never reaches any other container.
 
-Once the stack is up, the agent has `git_status`/`git_diff`/`git_log`/
-`git_branch_list`/`git_commit`/`git_create_branch`/`git_checkout`/
-`git_show`/`git_remote`/`git_rev_parse`/`git_merge_base`/`git_tag_list`
-available immediately (all local, all ungated) and `git_fetch` too (the one
-other tool here that reaches the network - read-direction only, against the
-one pre-configured remote, never pushes), plus `git_push_request(branch)`,
-which only *stages* a push - it never pushes on its own. A pending push
+`git` is installed in the Workspace (`workspace/default.nix`) - once the
+stack is up, the agent runs `status`/`diff`/`log`/`commit`/`branch`/
+`checkout`/etc. the ordinary way, via `workspace_exec("git ...")` against
+`/repo`, including anything those trigger (commit hooks, lint-on-commit
+frameworks, etc.) - contained in the network-isolated Workspace, not next to
+the deploy key. `git-mcp` itself exposes just two tools: `git_fetch` (the
+one tool here that reaches the network besides push - read-direction only,
+against the one pre-configured remote, never pushes) and
+`git_push_request(branch)`, which only *stages* a push - it never pushes on
+its own. Behind the scenes, the Orchestrator's harness keeps the Workspace's
+`/repo` and `git-mcp`'s own private gateway mirror in sync via a `git
+bundle` relay (never a shared volume, never something the LLM sees - see
+ADR-0004) - nothing to configure, it just runs on every turn. A pending push
 shows up in chat as e.g.:
 
 ```
@@ -233,7 +240,7 @@ The general premise is to contain each container to bare least priviledges from 
 ### Egress
 
 Point 4 covers commands going into the Workspace Sandbox. Getting data back out needs to be just as strict, and will use two controlled paths:
-1) Git MCP - handles code egress. Local git work (commit, branch, diff, log) isn't gated - the Workspace Sandbox is already fully network isolated (point 4) so a local git binary in there can't reach a remote anyway, and the Workspace doesn't even need git installed since the MCP can do this local work on the Agent's behalf too. The MCP itself only has limited powers for the one action that actually crosses the boundary: push to a pre-configured remote and branch pattern, no arbitrary remotes, no force-push, no git config changes, no hooks. Holds the auth credentials itself so the Workspace Sandbox/Agent never see them, and requires human approval before an external push goes out.
+1) Git MCP - handles code egress. Local git work (commit, branch, diff, log) isn't gated - the Workspace Sandbox is already fully network isolated (point 4) so a local git binary in there can't reach a remote anyway. `git` **is** installed in the Workspace (as of [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md)) and the Agent runs local git work there directly, hooks included - the Workspace is where arbitrary tooling is meant to run, so a hook has nowhere to reach. Git MCP itself never sees a working tree or a hook at all any more; it holds a private mirror of the remote, synced with the Workspace via an inert `git bundle` exchange, and has limited powers for the one action that actually crosses the boundary: push to a pre-configured remote and branch pattern, no arbitrary remotes, no force-push, no git config changes. Holds the auth credentials itself so the Workspace Sandbox/Agent never see them, and requires human approval before an external push goes out.
 2) Build artifacts - egressed via a host triggered "docker cp", run from the same privileged MCP host container that owns the Docker socket (point 4), rather than anything inside the Workspace Sandbox. Only allowed to copy from a pre-declared output directory in the workspace, never an arbitrary path. Still to decide if artifacts get scanned/size-capped on the way out too.
 
 ### Threat Model
@@ -255,6 +262,7 @@ Not building for these in v1, but keeping them in mind now in case they change t
 5) Cross-session/cross-agent leakage - state or data leaking between reused Workspace containers in a multi-agent setup. Mitigate by treating Workspace containers as ephemeral and destroying/recreating them per session.
 6) Memory-store poisoning (phase 2, docs/adr/0002-phase-2-isolation-ux-memory.md Decision 4) - content the Agent reads via workspace_exec (a file, a command's output) could carry injected text instructing it to persist something into the Memory MCP server that then gets trusted in a *later* session, since that store is deliberately meant to survive across sessions. Not solved in phase 2; candidate mitigation is surfacing what's about to be persisted to the human before it's written, in a later phase.
 7) Docker-socket-proxy is category-only, not container-scoped - the proxy fronting workspace-mcp's Docker access (tecnativa/docker-socket-proxy) only gates whole API categories (CONTAINERS/EXEC/POST) on or off; there's no way to restrict *which* container EXEC targets. A fully-compromised workspace-mcp could exec into any container in the topology (git-mcp, chat-mcp, memory-mcp, orchestrator, the proxy itself), not just the intended Workspace container - meaning the "even if workspace-mcp's code is fully compromised" guarantee ADR-0002 Decision 3 claims only holds for the *category* of actions (no image pulls, no new containers, no volume/network tampering), not the *target*. A custom per-container nginx filter was tried and reverted (nginx doesn't reliably relay Docker's exec/attach hijack protocol over a unix-socket upstream - see [Docker socket proxy](#docker-socket-proxy) for the full story). The two real fixes - a Docker Authorization Plugin (daemon-level, never sits in the hijacked stream's data path) or a purpose-built raw-relay filter (peek at the request line once, dumb-forward the rest) - are real, unscoped follow-up work, not done yet.
+8) Git MCP's egress isn't host:port-scoped, and a Git MCP RCE can push unilaterally - see [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md) Decision 4. `git-egress` restricts `git-mcp` to *a* network, not to the one configured remote host/port, so arbitrary code running in that process (a bug in git-mcp's own Python, not a git side effect - ADR-0004 closes the git-side-effect vector) could still reach an attacker's server instead of GitHub. The same compromise could also call `push_execute` or invoke `git push` directly, bypassing the branch-pattern check and human-approval gate - it can use the loaded ssh-agent identity, though not read the raw key material back off disk. Both are accepted gaps, not solved: the first needs an egress-filtering proxy (new infrastructure, same category as item 7 above); the second needs a separate signer that only authorizes a push the Orchestrator's harness has actually seen approved, so git-mcp itself can no longer push unilaterally even with full code execution - deliberately not built, since it's a materially new piece of infrastructure rather than a hardening pass on what exists. Residual risk here is bounded by scoping the deploy key to one repo and using branch protection/required reviews on it, not by anything in this topology.
 
 ### Docker socket proxy
 

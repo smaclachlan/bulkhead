@@ -309,7 +309,7 @@
 
           # Recreates the workspace container fresh from its current image -
           # undoes anything the agent changed inside it (installed packages,
-          # /tmp files, etc.) without touching the shared /repo volume.
+          # /tmp files, etc.) without touching its /repo volume.
           # Usage: nix run .#reset-workspace -- [env-file]  (same profile
           # convention as down/git-unlock.)
           reset-workspace = {
@@ -329,10 +329,12 @@
             '');
           };
 
-          # Wipes the shared workspace-repo volume too, so git-mcp re-clones
-          # from scratch - destroys any uncommitted/unpushed local work.
-          # Usage: nix run .#reset-repo -- [env-file] [--yes]  (--yes skips
-          # the confirmation prompt, for scripted use.)
+          # Wipes both the workspace's working tree and git-mcp's gateway
+          # mirror (docs/adr/0004-git-mcp-bundle-relay.md - the two are
+          # separate volumes now, not one shared one) so both re-clone from
+          # the remote from scratch - destroys any uncommitted/unpushed
+          # local work. Usage: nix run .#reset-repo -- [env-file] [--yes]
+          # (--yes skips the confirmation prompt, for scripted use.)
           reset-repo = {
             type = "app";
             program = toString (pkgs.writeShellScript "bulkhead-reset-repo" ''
@@ -352,18 +354,19 @@
               . scripts/lib/profile.sh
               bulkhead_resolve_profile "$env_file" || exit 1
               project_name="$BULKHEAD_PROJECT_NAME"
-              volume="''${project_name}_workspace-repo"
+              repo_volume="''${project_name}_workspace-repo"
+              gateway_volume="''${project_name}_git-gateway-data"
 
               if [ -z "$yes" ]; then
-                printf 'This destroys the "%s" volume (any uncommitted/unpushed work in /repo) and re-clones from the remote. Type "yes" to continue: ' "$volume" >&2
+                printf 'This destroys the "%s" and "%s" volumes (any uncommitted/unpushed work in /repo, and git-mcp'"'"'s gateway mirror) and re-clones both from the remote. Type "yes" to continue: ' "$repo_volume" "$gateway_volume" >&2
                 read -r confirm
                 [ "$confirm" = "yes" ] || { echo "aborted" >&2; exit 1; }
               fi
 
               dc() { ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" "$@"; }
-              echo "== Stopping workspace/git-mcp, wiping $volume, recreating fresh ==" >&2
+              echo "== Stopping workspace/git-mcp, wiping $repo_volume and $gateway_volume, recreating fresh ==" >&2
               dc stop workspace git-mcp
-              ${pkgs.docker}/bin/docker volume rm "$volume"
+              ${pkgs.docker}/bin/docker volume rm "$repo_volume" "$gateway_volume"
               dc up -d --force-recreate workspace git-mcp
             '');
           };

@@ -1,7 +1,9 @@
-# Git MCP: code egress - see src/git_mcp/server.py and
-# docs/adr/0003-phase-3-git-mcp.md. Holds the deploy key (bind-mounted at
-# runtime, never baked into the image) and is the only container in the
-# topology with network egress to the git remote.
+# Git MCP: code egress - see src/git_mcp/server.py,
+# docs/adr/0003-phase-3-git-mcp.md and docs/adr/0004-git-mcp-bundle-relay.md.
+# Holds the deploy key (bind-mounted at runtime, never baked into the image)
+# and is the only container in the topology with network egress to the git
+# remote. Holds no working tree and runs no local git ops on the agent's
+# behalf any more - see ADR-0004.
 #
 # Built via `nix run .#build-git-mcp-image` (see flake.nix / ADR-0001 §3 for
 # why this stays a plain Dockerfile instead of a pure Nix derivation, same
@@ -38,7 +40,9 @@ ENV PYTHONPATH=/app/src
 ENV GIT_MCP_HOST=0.0.0.0
 ENV GIT_MCP_LLM_PORT=8805
 ENV GIT_MCP_ADMIN_PORT=8806
-ENV GIT_REPO_PATH=/repo
+# The private bare-mirror gateway repo (docs/adr/0004-git-mcp-bundle-relay.md)
+# - not a working tree, never shared with any other container.
+ENV GIT_GATEWAY_PATH=/gitdir
 
 # Same values state.py's _ssh_env() computes per-subprocess-call, baked in
 # as container-wide defaults too - both paths are fixed/known ahead of time
@@ -53,13 +57,5 @@ ENV SSH_AUTH_SOCK=/tmp/git-mcp-agent.sock
 ENV GIT_SSH_COMMAND="ssh -i /tmp/git-mcp-deploy-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
 EXPOSE 8805 8806
-
-# Identity for local commits made on the agent's behalf - not the human's own
-# identity, so commits are attributable to Bulkhead rather than impersonating a
-# person. Overridable via env if a deployment wants something else.
-ENV GIT_AUTHOR_NAME="Bulkhead Agent"
-ENV GIT_AUTHOR_EMAIL="bulkhead-agent@localhost"
-ENV GIT_COMMITTER_NAME="Bulkhead Agent"
-ENV GIT_COMMITTER_EMAIL="bulkhead-agent@localhost"
 
 CMD ["python", "-m", "git_mcp.server"]

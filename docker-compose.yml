@@ -102,13 +102,14 @@ services:
     # image and of essentially any real base distro a custom Dockerfile
     # would use.
     command: ["sh", "-c", "sleep infinity"]
-    # Shared with git-mcp (ADR-0003 Decision 1) - the working tree git-mcp
-    # clones/commits/pushes on the agent's behalf. Workspace itself still
-    # has no git installed and no network - it only ever sees the files
-    # that land here via git-mcp's side of the volume. Target path must
-    # match git-mcp's own mount below (both read WORKSPACE_REPO_PATH) -
-    # override it if a custom Workspace Dockerfile's tooling expects the
-    # project root somewhere other than the /repo default.
+    # The agent's actual working tree (ADR-0003 Decision 1). Since ADR-0004,
+    # this volume is exclusive to `workspace` - git-mcp no longer mounts it
+    # or anything else here. `workspace`'s own image now has `git` installed
+    # (workspace/default.nix) so local git ops - and any hooks a checkout
+    # triggers - run in this fully network-isolated container, not next to
+    # git-mcp's deploy key. git-mcp exchanges `git bundle` files with this
+    # repo via workspace-mcp's admin port instead of sharing a filesystem
+    # with it - see docs/adr/0004-git-mcp-bundle-relay.md.
     volumes:
       - workspace-repo:${WORKSPACE_REPO_PATH:-/repo}
     restart: on-failure
@@ -160,7 +161,12 @@ services:
 
   workspace-mcp:
     image: bulkhead-workspace-mcp:dev
-    # internal-workspace: reachable from orchestrator (existing).
+    # internal-workspace: reachable from orchestrator (existing) - also
+    # where its new admin port (export_bundle/import_bundle,
+    # docs/adr/0004-git-mcp-bundle-relay.md) is reached from; no new network
+    # needed since it's the same server_names-excluded-tool pattern
+    # git-mcp's own admin port already uses, just reached over an existing
+    # network rather than a new one between the two MCP servers directly.
     # internal-docker-proxy: reaches docker-socket-proxy (ADR-0002 §3) -
     # orchestrator is not on this network, so it can't reach the proxy
     # directly, only workspace-mcp's own narrow `exec` tool.
@@ -190,21 +196,40 @@ services:
       - memory-data:/data
     restart: on-failure
 
-  # Git MCP (ADR-0003) - the code egress path. Only container with network
-  # egress to the git remote and the only one holding the deploy key; no
-  # Docker socket, unlike workspace-mcp - a different privilege shape
-  # entirely (filesystem + one outbound network path, not host container
-  # control). Runs two MCP endpoints in one process (server.py) - see
-  # ADR-0003 Decision 3 for why push_execute/pending_push/push_cancel are
-  # on a separate port that's never registered with the Orchestrator's LLM.
+  # Git MCP (ADR-0003, reworked by ADR-0004) - the code egress path. Only
+  # container with network egress to the git remote and the only one
+  # holding the deploy key; no Docker socket, unlike workspace-mcp - a
+  # different privilege shape entirely (filesystem + one outbound network
+  # path, not host container control). Runs two MCP endpoints in one
+  # process (server.py) - see ADR-0003 Decision 3 for why
+  # push_execute/pending_push/push_cancel are on a separate port that's
+  # never registered with the Orchestrator's LLM.
+  #
+  # No longer shares any volume with `workspace` (ADR-0004) - its own
+  # `git-gateway-data` volume below holds a private *bare mirror* of the
+  # remote, not a working tree. Local git ops (and any hooks they trigger)
+  # now run in `workspace`, which has `git` installed; this container's own
+  # git invocations are limited to fetch/push against its gateway mirror and
+  # `git bundle` create/import for the Orchestrator's relay - none of which
+  # can be induced to run attacker-supplied code (see state.py's
+  # HARDENED_GIT_ARGS and its module docstring).
+  #
+  # cap_drop/no-new-privileges below are a second, container-level layer of
+  # the same "no side effects here" property the code enforces - even a full
+  # RCE in this process gains no Linux capabilities and can't re-acquire any
+  # via a setuid/setcap binary. Still runs as root and without a read-only
+  # root filesystem (ssh-agent's socket, the deploy key's private copy, and
+  # bundle tempfiles all need somewhere writable) - a non-root user plus
+  # `read_only: true` is a further hardening step, not done here; see
+  # docs/adr/0004-git-mcp-bundle-relay.md's Consequences.
   git-mcp:
     image: bulkhead-git-mcp:dev
     networks: [internal-git, git-egress]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
     volumes:
-      # Target must match workspace's mount above - same named volume,
-      # same path, both driven by WORKSPACE_REPO_PATH so they can't drift
-      # apart independently.
-      - workspace-repo:${WORKSPACE_REPO_PATH:-/repo}
+      - git-gateway-data:${GIT_GATEWAY_PATH:-/gitdir}
       # Read-only deploy key, this container only (ADR-0003 Decision 4). The
       # default is a checked-in placeholder (not a real key) so the stack
       # still comes up unconfigured - git-mcp's tools all report "not
@@ -215,10 +240,7 @@ services:
       - GIT_REMOTE_URL=${GIT_REMOTE_URL:-}
       - GIT_REMOTE_NAME=${GIT_REMOTE_NAME:-origin}
       - GIT_PUSH_BRANCH_PATTERN=${GIT_PUSH_BRANCH_PATTERN:-agent/*}
-      # state.py's GitState defaults this to /repo itself, but that default
-      # would silently disagree with a WORKSPACE_REPO_PATH override above -
-      # pass the same value through explicitly so they can't drift apart.
-      - GIT_REPO_PATH=${WORKSPACE_REPO_PATH:-/repo}
+      - GIT_GATEWAY_PATH=${GIT_GATEWAY_PATH:-/gitdir}
     restart: on-failure
 
   chat-mcp:
@@ -242,10 +264,14 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CHAT_MCP_URL=http://chat-mcp:8802/mcp
-      # git-mcp's admin port (push_execute/pending_push/push_cancel) is
-      # reached directly by git_admin_client.py, not via mcp_agent.config.yaml
-      # /server_names - see ADR-0003 Decision 3.
+      # git-mcp's admin port (push_execute/pending_push/push_cancel, plus
+      # the bundle-relay tools) is reached directly by git_admin_client.py,
+      # not via mcp_agent.config.yaml/server_names - see ADR-0003 Decision 3.
       - GIT_MCP_ADMIN_URL=http://git-mcp:8806/mcp
+      # workspace-mcp's admin port (export_bundle/import_bundle) - same
+      # exclusion, reached directly by workspace_admin_client.py. See
+      # docs/adr/0004-git-mcp-bundle-relay.md.
+      - WORKSPACE_MCP_ADMIN_URL=http://workspace-mcp:8807/mcp
       # Off by default: main.py strips mcp-agent's own
       # "[Calling tool X with args Y]" notices out of the reply before
       # relaying it to chat-mcp, so the chat transcript only shows the
@@ -265,7 +291,12 @@ volumes:
   # piece of Bulkhead state deliberately meant to survive a container
   # recreate, unlike chat-mcp's in-memory (and unpersisted) ChatState.
   memory-data: {}
-  # The Workspace's actual working tree (ADR-0003 Decision 1) - shared
-  # between workspace and git-mcp, resolving README point 8's previously
-  # open "where does the working tree live" question.
+  # The Workspace's actual working tree (ADR-0003 Decision 1, resolving
+  # README point 8) - `workspace` only since ADR-0004; git-mcp no longer
+  # mounts this at all.
   workspace-repo: {}
+  # git-mcp's own private bare mirror of the remote (ADR-0004) - not a
+  # working tree, never mounted anywhere else. Wiped together with
+  # workspace-repo by `nix run .#reset-repo` so both sides of the relay
+  # start clean together.
+  git-gateway-data: {}

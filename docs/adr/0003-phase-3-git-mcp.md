@@ -1,6 +1,9 @@
 # ADR-0003: Phase 3 — Git MCP (Code Egress)
 
-- Status: Proposed
+- Status: Amended by [ADR-0004](0004-git-mcp-bundle-relay.md) - Decisions 1
+  and 2 below (the shared working-tree volume, and local git tools living in
+  git-mcp) are superseded; Decisions 3, 4 and 5 (push_request/push_execute,
+  the deploy key, network segmentation) are unchanged and still current.
 - Date: 2026-09-19
 - Supersedes: none
 - Amends: none (additive - see Decision 1 for the one previously-open README

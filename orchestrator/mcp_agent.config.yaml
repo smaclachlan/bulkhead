@@ -11,12 +11,14 @@
 # narrowing of ADR-0001 §2's "one tool" invariant, not a reversal of it:
 # see that ADR section for why this one server is the accepted exception.
 #
-# Phase 3 (docs/adr/0003-phase-3-git-mcp.md Decision 3) adds Git MCP's
-# LLM-facing port only (status/diff/log/branch_list/commit/create_branch/
-# checkout/push_request). Its admin port (push_execute/pending_push/
-# push_cancel) is deliberately NOT listed here - it's reached directly by
-# orchestrator/src/orchestrator/git_admin_client.py, the same
-# hand-rolled-client pattern chat_client.py already uses, so those three
+# Phase 3 (docs/adr/0003-phase-3-git-mcp.md Decision 3), reworked by
+# docs/adr/0004-git-mcp-bundle-relay.md, adds Git MCP's LLM-facing port -
+# now just fetch/push_request. Local git ops moved to the Workspace (git
+# installed there - see workspace/default.nix); the LLM runs them via
+# workspace_exec instead. Git MCP's admin port (pending_push/push_execute/
+# push_cancel/export_bundle/import_bundle) is deliberately NOT listed here -
+# it's reached directly by orchestrator/src/orchestrator/git_admin_client.py,
+# the same hand-rolled-client pattern chat_client.py already uses, so those
 # tools stay structurally unreachable by the LLM.
 $schema: https://raw.githubusercontent.com/lastmile-ai/mcp-agent/refs/heads/main/schema/mcp-agent.config.schema.json
 
@@ -41,11 +43,12 @@ mcp:
     memory:
       transport: streamable_http
       url: "http://memory-mcp:8803/mcp"
-    # Server key "git" + its fourteen tools become "git_status", "git_diff",
-    # "git_push_request", "git_fetch", etc. See ADR-0003 Decision 2/3 for the
-    # tool list and why push_request only stages a request rather than
-    # pushing, and its own follow-up note on why git_fetch is safe as the
-    # one other tool here (besides push_request) that reaches the network.
+    # Server key "git" + its two tools become "git_fetch"/"git_push_request".
+    # See docs/adr/0004-git-mcp-bundle-relay.md for why this shrank from
+    # fourteen tools to two, ADR-0003 Decision 2/3 for why push_request only
+    # stages a request rather than pushing, and ADR-0003's own follow-up
+    # note on why git_fetch is safe as the one other tool here (besides
+    # push_request) that reaches the network.
     git:
       transport: streamable_http
       url: "http://git-mcp:8805/mcp"

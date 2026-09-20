@@ -1,14 +1,12 @@
-"""Direct MCP client to Git MCP's admin port: pending_push/push_execute/
-push_cancel, plus (docs/adr/0004-git-mcp-bundle-relay.md) export_bundle/
-import_bundle for the harness's bundle-sync relay - used by the harness loop
-in main.py.
+"""Direct MCP client to Workspace MCP's admin port (export_bundle/
+import_bundle), used by the harness loop in main.py to relay `git bundle`
+bytes to/from Git MCP's gateway repo.
 
-None of these five tools are registered in mcp_agent.config.yaml or
-server_names - the LLM cannot reach them at all. Approving or denying a
-pending push, and syncing bundle bytes between here and the Workspace, are
-both harness-level control flow, the same reasoning chat_client.py gives for
-keeping chat_send/chat_receive off the LLM's tool list. See
-docs/adr/0003-phase-3-git-mcp.md Decision 3.
+These two tools are deliberately not registered in mcp_agent.config.yaml or
+server_names - the LLM never sees bundle bytes or the two containers'
+relationship, same reasoning chat_client.py/git_admin_client.py give for
+keeping their own harness-only tools off the LLM's list. See
+docs/adr/0004-git-mcp-bundle-relay.md.
 """
 
 import json
@@ -25,14 +23,14 @@ def _result_json(result: Any) -> dict:
     return json.loads(text)
 
 
-class GitAdminClient:
+class WorkspaceAdminClient:
     def __init__(self, url: str):
         self._url = url
         self._streams_cm = None
         self._session_cm = None
         self._session: "ClientSession | None" = None
 
-    async def __aenter__(self) -> "GitAdminClient":
+    async def __aenter__(self) -> "WorkspaceAdminClient":
         self._streams_cm = streamablehttp_client(self._url)
         read, write, _get_session_id = await self._streams_cm.__aenter__()
         self._session_cm = ClientSession(read, write)
@@ -44,25 +42,13 @@ class GitAdminClient:
         await self._session_cm.__aexit__(exc_type, exc_val, exc_tb)
         await self._streams_cm.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def pending(self) -> list[dict]:
-        result = await self._session.call_tool("pending_push", {})
-        return _result_json(result).get("pending", [])
-
-    async def execute(self, request_id: str) -> dict:
-        result = await self._session.call_tool("push_execute", {"request_id": request_id})
-        return _result_json(result)
-
-    async def cancel(self, request_id: str) -> bool:
-        result = await self._session.call_tool("push_cancel", {"request_id": request_id})
-        return _result_json(result).get("ok", False)
-
     async def export_bundle(self, refspec: str) -> dict:
-        """Bundle refs matching `refspec` out of the gateway repo."""
+        """Bundle refs matching `refspec` out of the Workspace's /repo."""
         result = await self._session.call_tool("export_bundle", {"refspec": refspec})
         return _result_json(result)
 
     async def import_bundle(self, data_b64: str, refspec: str) -> dict:
-        """Absorb a base64 bundle into the gateway repo's refs per `refspec`."""
+        """Absorb a base64 bundle into the Workspace's /repo per `refspec`."""
         result = await self._session.call_tool(
             "import_bundle", {"data_b64": data_b64, "refspec": refspec}
         )

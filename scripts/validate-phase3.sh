@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Automated harness for docs/plans/phase-3-validation.md - copied from
 # scripts/validate-phase2.sh per that script's own extension note. Verifies
-# the claims in docs/adr/0003-phase-3-git-mcp.md: local git ops work through
-# the real chat/LLM path, a disallowed branch is rejected server-side, a
-# push cannot happen without an explicit human "approve <id>" reply, the
-# working tree is genuinely shared between workspace and git-mcp, and the
-# admin tools (push_execute/pending_push/push_cancel) never reach the LLM's
-# own config - see that ADR's "Testing & Validation" section and
-# phase-3-validation.md for the reasoning behind each check.
+# the claims in docs/adr/0003-phase-3-git-mcp.md and
+# docs/adr/0004-git-mcp-bundle-relay.md: local git ops (now via
+# workspace_exec, git installed in the Workspace) sync through to git-mcp's
+# gateway mirror via the bundle relay, a disallowed branch is rejected
+# server-side, a push cannot happen without an explicit human "approve <id>"
+# reply, workspace and git-mcp share NO volume any more, a hostile on-disk
+# hooksPath on git-mcp's gateway never executes even during a real push, and
+# the admin tools (push_execute/pending_push/push_cancel/export_bundle/
+# import_bundle) never reach the LLM's own config - see that ADR's "Testing
+# & Validation" section and phase-3-validation.md for the reasoning behind
+# each check.
 #
 # Run from the repo root, with the stack already up:
 #   sh scripts/validate-phase3.sh [env-file]
@@ -152,25 +156,33 @@ else
   record token.found pass "found chat-mcp token in logs"
 fi
 
-# ---- Step 3: shared working-tree volume ---------------------------------
+# ---- Step 3: no shared volume between workspace and git-mcp -------------
 
 echo
-echo "== Step 3: workspace-repo volume genuinely shared (ADR-0003 Decision 1) =="
+echo "== Step 3: workspace and git-mcp share NO volume (ADR-0004 Decision 1) =="
 
-volume_marker="bulkhead-volume-check-$(date +%s)"
-dc exec -T git-mcp sh -c "echo shared-ok > /repo/${volume_marker}" >/dev/null 2>&1
-seen="$(dc exec -T workspace cat "/repo/${volume_marker}" 2>&1)"
+# Inverse of the check ADR-0003 originally had here: this is the regression
+# guard against ever reintroducing the shared-.git-directory vector ADR-0004
+# fixes (docs/adr/0004-git-mcp-bundle-relay.md's Context section) - a file
+# written into git-mcp's gateway path must NOT be visible from workspace's
+# /repo, because there must be no writable path between the two any more.
+volume_marker="bulkhead-isolation-check-$(date +%s)"
+gateway_path="$(dc exec -T git-mcp printenv GIT_GATEWAY_PATH 2>/dev/null | tr -d '[:space:]')"
+[ -n "$gateway_path" ] || gateway_path="/gitdir"
+dc exec -T git-mcp sh -c "echo should-not-cross > ${gateway_path}/${volume_marker}" >/dev/null 2>&1
+seen="$(dc exec -T workspace sh -c "cat /repo/${volume_marker} 2>&1; find / -xdev -name '${volume_marker}' 2>/dev/null")"
 
-if printf '%s' "$seen" | grep -q 'shared-ok'; then
-  record step3.shared-volume pass "a file written by git-mcp into /repo is visible from workspace's /repo"
+if [ -z "$seen" ]; then
+  record step3.no-shared-volume pass "a file written into git-mcp's gateway path is NOT visible anywhere in workspace"
 else
-  record step3.shared-volume fail "a file written by git-mcp into /repo is visible from workspace's /repo" "$seen"
+  record step3.no-shared-volume fail "a file written into git-mcp's gateway path is NOT visible anywhere in workspace" "$seen"
 fi
+dc exec -T git-mcp rm -f "${gateway_path}/${volume_marker}" >/dev/null 2>&1
 
 # ---- Step 4: git-mcp responds correctly whether configured or not -------
 
 echo
-echo "== Step 4: git-mcp's status tool (configured vs. not-configured) =="
+echo "== Step 4: git-mcp's fetch tool (configured vs. not-configured) =="
 
 git_remote_configured="$(dc exec -T git-mcp printenv GIT_REMOTE_URL 2>/dev/null | tr -d '[:space:]')"
 
@@ -186,7 +198,7 @@ def _flatten(exc):
     return [f"{type(exc).__name__}: {exc}"]
 '
 
-git_status_py="${mcp_client_common}
+git_fetch_py="${mcp_client_common}
 async def main():
     out = {}
     try:
@@ -195,7 +207,7 @@ async def main():
         async with streamablehttp_client('http://git-mcp:8805/mcp') as (read, write, _sid):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool('status', {})
+                result = await session.call_tool('fetch', {})
                 text = '\n'.join((getattr(b, 'text', '') or '') for b in result.content)
                 out['text'] = text
     except Exception as e:
@@ -204,21 +216,21 @@ async def main():
 asyncio.run(main())
 "
 
-status_result="$(dc exec -T orchestrator python3 -c "$git_status_py" 2>&1)"
+fetch_result="$(dc exec -T orchestrator python3 -c "$git_fetch_py" 2>&1)"
 
 if [ -n "$git_remote_configured" ]; then
-  if printf '%s' "$status_result" | grep -q 'not configured'; then
-    record step4.git-status-tool fail "git-mcp status tool reflects its configured state" \
-      "GIT_REMOTE_URL is set but status still reports not-configured: $status_result"
+  if printf '%s' "$fetch_result" | grep -q 'not configured'; then
+    record step4.git-fetch-tool fail "git-mcp fetch tool reflects its configured state" \
+      "GIT_REMOTE_URL is set but fetch still reports not-configured: $fetch_result"
   else
-    record step4.git-status-tool pass "git-mcp status tool reflects its configured state" "$status_result"
+    record step4.git-fetch-tool pass "git-mcp fetch tool reflects its configured state" "$fetch_result"
   fi
 else
-  if printf '%s' "$status_result" | grep -q 'not configured'; then
-    record step4.git-status-tool pass "git-mcp status tool reflects its configured state (unconfigured checkout)" "$status_result"
+  if printf '%s' "$fetch_result" | grep -q 'not configured'; then
+    record step4.git-fetch-tool pass "git-mcp fetch tool reflects its configured state (unconfigured checkout)" "$fetch_result"
   else
-    record step4.git-status-tool fail "git-mcp status tool reflects its configured state" \
-      "GIT_REMOTE_URL is unset but status did not report not-configured: $status_result"
+    record step4.git-fetch-tool fail "git-mcp fetch tool reflects its configured state" \
+      "GIT_REMOTE_URL is unset but fetch did not report not-configured: $fetch_result"
   fi
 fi
 
@@ -236,7 +248,7 @@ config_content="$(dc exec -T orchestrator cat /app/mcp_agent.config.yaml 2>&1)"
 config_active="$(printf '%s\n' "$config_content" | sed 's/#.*//')"
 
 if printf '%s' "$config_active" | grep -q '8805' \
-  && ! printf '%s' "$config_active" | grep -qE '8806|push_execute|pending_push|push_cancel'; then
+  && ! printf '%s' "$config_active" | grep -qE '8806|8807|push_execute|pending_push|push_cancel|export_bundle|import_bundle'; then
   record step5.admin-tools-excluded pass \
     "orchestrator's mcp_agent.config.yaml registers git-mcp's LLM port but never its admin port/tools"
 else
@@ -259,7 +271,7 @@ fi
 # ---- Steps 7-9: real git remote, opt-in ---------------------------------
 
 echo
-echo "== Steps 7-9: real git remote (opt-in on GIT_REMOTE_URL) =="
+echo "== Steps 7-10: real git remote (opt-in on GIT_REMOTE_URL) =="
 
 if [ -z "$git_remote_configured" ]; then
   skip step7.local-git-ops-through-chat "local git ops through the real chat/LLM path" "GIT_REMOTE_URL not set on git-mcp"
@@ -267,25 +279,31 @@ if [ -z "$git_remote_configured" ]; then
   skip step9.push-not-immediate "push_request stages without pushing" "GIT_REMOTE_URL not set on git-mcp"
   skip step9.deny-cancels-and-blocks-reapproval "deny cancels a pending push and blocks re-approval" "GIT_REMOTE_URL not set on git-mcp"
   skip step9.approve-pushes-to-remote "approve actually pushes to the remote" "GIT_REMOTE_URL not set on git-mcp"
+  skip step10.gateway-is-bare "git-mcp's gateway repo is bare" "GIT_REMOTE_URL not set on git-mcp"
+  skip step10.hook-immune "a hostile core.hooksPath on the gateway never fires during push_request/approve" "GIT_REMOTE_URL not set on git-mcp"
 elif [ -z "${token:-}" ]; then
   record step7.local-git-ops-through-chat fail "skipped - no chat-mcp token"
   record step8.push-request-branch-rejected fail "skipped - no chat-mcp token"
   record step9.push-not-immediate fail "skipped - no chat-mcp token"
   record step9.deny-cancels-and-blocks-reapproval fail "skipped - no chat-mcp token"
   record step9.approve-pushes-to-remote fail "skipped - no chat-mcp token"
+  record step10.gateway-is-bare fail "skipped - no chat-mcp token"
+  record step10.hook-immune fail "skipped - no chat-mcp token"
 else
   # A passphrase-protected deploy key that hasn't been unlocked yet (see
-  # git-mcp/git-mcp-unlock/state.py's _start_agent) leaves git-mcp's repo
-  # uncloned - step7/step9 would otherwise fail deep inside a real git/ssh
-  # call with a cryptic "Permission denied (publickey)"/"Could not read
-  # from remote repository" rather than the actual, fixable cause. Check
-  # once up front and give one clear message for those instead. step8 is
-  # unaffected either way - its disallowed-branch case is rejected before
+  # git-mcp/git-mcp-unlock/state.py's _start_agent) leaves git-mcp's gateway
+  # mirror uncloned - step7/step9 would otherwise fail deep inside a real
+  # git/ssh call with a cryptic "Permission denied (publickey)"/"Could not
+  # read from remote repository" rather than the actual, fixable cause.
+  # Check once up front and give one clear message for those instead. step8
+  # is unaffected either way - its disallowed-branch case is rejected before
   # ever touching git, so it always runs for real below.
+  gateway_path="$(dc exec -T git-mcp printenv GIT_GATEWAY_PATH 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$gateway_path" ] || gateway_path="/gitdir"
   repo_ready=false
   dc exec -T git-mcp sh -c \
-    '[ -d "${GIT_REPO_PATH:-/repo}/.git" ]' >/dev/null 2>&1 && repo_ready=true
-  not_ready_msg="git-mcp's working tree isn't cloned yet - if its deploy key has a passphrase, run 'nix run .#git-unlock' (or 'nix run .#up') first, then re-run this script"
+    "[ -f '${gateway_path}/HEAD' ]" >/dev/null 2>&1 && repo_ready=true
+  not_ready_msg="git-mcp's gateway mirror isn't cloned yet - if its deploy key has a passphrase, run 'nix run .#git-unlock' (or 'nix run .#up') first, then re-run this script"
   send_chat() {
     curl -s -o /dev/null -X POST "${CHAT_BASE_URL}/api/send?token=${token}" \
       -H 'Content-Type: application/json' -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$1")"
@@ -326,37 +344,38 @@ print(max((m['id'] for m in data.get('messages', [])), default=0))
   # -- Step 7: local git ops through the real chat/LLM path ---------------
 
   echo
-  echo "== Step 7: local git operations through the real chat/LLM path (ADR-0003 Decision 2) =="
+  echo "== Step 7: local git operations through the real chat/LLM path (ADR-0004 Decision 2) =="
 
   if ! $repo_ready; then
     record step7.local-git-ops-through-chat fail "$not_ready_msg"
   else
     git_marker="bulkhead-git-check-$(date +%s)"
     since="$(last_id)"
-    send_chat "Using workspace_exec, write the text hello-from-validate-phase3 into a new file at /repo/${git_marker}.txt. Then call git_commit with the commit message 'validate-phase3: ${git_marker}'. Briefly confirm when done."
+    send_chat "Using workspace_exec, write the text hello-from-validate-phase3 into a new file at /repo/${git_marker}.txt. Then, still via workspace_exec, run 'git add -A && git commit -m \"validate-phase3: ${git_marker}\"'. Briefly confirm when done."
     wait_for_reply "$since" "${git_marker}" 40 >/dev/null
 
     # 60 tries * 2s = up to 120s here, on top of wait_for_reply's own 80s
     # above (whose result is discarded but which still consumes wall time
-    # first) - confirmed live that the write-file-then-git_commit round
-    # trip through a real chat/LLM turn can genuinely take longer than this
-    # combined ~120s used to allow: two consecutive validate-phase3.sh runs
-    # each recorded the marker commit as landing (visible in the *next*
-    # run's `git log`), just after their own budget had already given up
-    # and recorded a fail.
+    # first) - confirmed live that the write-file-then-commit round trip
+    # through a real chat/LLM turn can genuinely take longer than this
+    # combined ~120s used to allow. Checked against git-mcp's gateway
+    # mirror, not the Workspace's own /repo - this also exercises the
+    # per-turn bundle-sync relay (docs/adr/0004-git-mcp-bundle-relay.md),
+    # not just the commit itself: the commit only reaches here via
+    # bundle_sync.sync_to_gateway running after the agent's turn.
     log_output=""
     for _ in $(seq 1 60); do
       sleep 2
-      log_output="$(dc exec -T git-mcp git -C /repo log --oneline -n 20 2>&1)"
+      log_output="$(dc exec -T git-mcp git --git-dir="$gateway_path" log --oneline -n 20 --branches 2>&1)"
       printf '%s' "$log_output" | grep -q "$git_marker" && break
     done
 
     if printf '%s' "$log_output" | grep -q "$git_marker"; then
       record step7.local-git-ops-through-chat pass \
-        "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log" "$log_output"
+        "agent wrote a file via workspace_exec and committed it there; commit synced into git-mcp's gateway mirror" "$log_output"
     else
       record step7.local-git-ops-through-chat fail \
-        "agent wrote a file via workspace_exec and committed it via git_commit; commit found in git-mcp's log" "$log_output"
+        "agent wrote a file via workspace_exec and committed it there; commit synced into git-mcp's gateway mirror" "$log_output"
     fi
   fi
 
@@ -421,12 +440,14 @@ asyncio.run(main())
     record step9.push-not-immediate fail "$not_ready_msg"
     record step9.deny-cancels-and-blocks-reapproval fail "$not_ready_msg"
     record step9.approve-pushes-to-remote fail "$not_ready_msg"
+    record step10.gateway-is-bare fail "$not_ready_msg"
+    record step10.hook-immune fail "$not_ready_msg"
   else
 
   extract_request_id() {
     # extract_request_id <reply-text> <branch> - pulls the request_id out of
     # main.py's own "reply 'approve <id>'" notice for the given branch line.
-    printf '%s' "$1" | grep -oE "[0-9a-f]{16}: push HEAD -> [^ ]*/${2} " | grep -oE '^[0-9a-f]{16}' | head -1
+    printf '%s' "$1" | grep -oE "[0-9a-f]{16}: push refs/heads/${2} -> [^ ]*/${2} " | grep -oE '^[0-9a-f]{16}' | head -1
   }
 
   ls_remote() {
@@ -447,13 +468,18 @@ asyncio.run(main())
     # ... to the list of known hosts" is ssh's own fixed wording - specific
     # enough that a loose match still can't collide with real ls-remote
     # output (refs/sha1 lines never contain this phrase).
-    dc exec -T git-mcp git -C /repo ls-remote origin "refs/heads/$1" 2>&1 \
+    dc exec -T git-mcp git --git-dir="$gateway_path" ls-remote origin "refs/heads/$1" 2>&1 \
       | grep -v 'Permanently added.*to the list of known hosts'
   }
 
+  # docs/adr/0004-git-mcp-bundle-relay.md: push_execute now pushes the
+  # gateway's refs/heads/<branch> by name, not "HEAD" - so a branch of that
+  # exact name has to exist (and be synced) in the Workspace before
+  # push_request is even worth calling. Ask the agent to create it via
+  # workspace_exec in the same turn, immediately before requesting the push.
   deny_branch="agent/bulkhead-validate-deny-$(date +%s)"
   since="$(last_id)"
-  send_chat "Call git_push_request with branch '${deny_branch}'."
+  send_chat "Using workspace_exec, run 'git checkout -b ${deny_branch} && git commit --allow-empty -m \"validate-phase3: ${deny_branch}\"'. Then call git_push_request with branch '${deny_branch}'."
   reply="$(wait_for_reply "$since" "approve" 30)"
   deny_id="$(extract_request_id "$reply" "$deny_branch")"
 
@@ -495,7 +521,7 @@ asyncio.run(main())
 
   approve_branch="agent/bulkhead-validate-approve-$(date +%s)"
   since="$(last_id)"
-  send_chat "Call git_push_request with branch '${approve_branch}'."
+  send_chat "Using workspace_exec, run 'git checkout main 2>/dev/null || git checkout master 2>/dev/null; git checkout -b ${approve_branch} && git commit --allow-empty -m \"validate-phase3: ${approve_branch}\"'. Then call git_push_request with branch '${approve_branch}'."
   reply="$(wait_for_reply "$since" "approve" 30)"
   approve_id="$(extract_request_id "$reply" "$approve_branch")"
 
@@ -515,6 +541,70 @@ asyncio.run(main())
         "refs/heads/${approve_branch} not found on remote after approve: $remote_after_approve"
     fi
   fi
+
+  # -- Step 10: doubly-enforced no-side-effects on git-mcp -----------------
+  #
+  # docs/adr/0004-git-mcp-bundle-relay.md's whole point: even if git-mcp's
+  # gateway repo's on-disk config gets clobbered into pointing hooksPath at
+  # a live malicious hook - simulating the exact scenario HARDENED_GIT_ARGS
+  # exists for, not just trusting that ADR's reasoning - a real push cycle
+  # through the gateway must still never execute it.
+
+  echo
+  echo "== Step 10: git-mcp ignores a hostile on-disk hooksPath even during a real push (ADR-0004 Decision 1) =="
+
+  bare_check="$(dc exec -T git-mcp sh -c "[ -d '${gateway_path}/.git' ] && echo HAS_WORKTREE || echo BARE" 2>&1)"
+  if [ "$bare_check" = "BARE" ]; then
+    record step10.gateway-is-bare pass "git-mcp's gateway repo is bare (no work tree, so no checkout-triggered hooks/filters)"
+  else
+    record step10.gateway-is-bare fail "git-mcp's gateway repo is bare (no work tree, so no checkout-triggered hooks/filters)" "$bare_check"
+  fi
+
+  dc exec -T git-mcp rm -f /tmp/CANARY-FIRED >/dev/null 2>&1
+  dc exec -T git-mcp sh -c "
+    mkdir -p /tmp/evil-hooks &&
+    printf '#!/bin/sh\ntouch /tmp/CANARY-FIRED\n' > /tmp/evil-hooks/pre-push &&
+    chmod +x /tmp/evil-hooks/pre-push &&
+    git --git-dir='${gateway_path}' config core.hooksPath /tmp/evil-hooks
+  " >/dev/null 2>&1
+
+  hook_branch="agent/bulkhead-validate-hookcheck-$(date +%s)"
+  since="$(last_id)"
+  send_chat "Using workspace_exec, run 'git checkout main 2>/dev/null || git checkout master 2>/dev/null; git checkout -b ${hook_branch} && git commit --allow-empty -m \"validate-phase3: ${hook_branch}\"'. Then call git_push_request with branch '${hook_branch}'."
+  reply="$(wait_for_reply "$since" "approve" 30)"
+  hook_id="$(extract_request_id "$reply" "$hook_branch")"
+
+  if [ -z "$hook_id" ]; then
+    record step10.hook-immune fail "a hostile core.hooksPath on the gateway never fires during push_request/approve" \
+      "could not extract a request_id from the agent's reply: $reply"
+  else
+    since="$(last_id)"
+    send_chat "approve ${hook_id}"
+    wait_for_reply "$since" "." 30 >/dev/null
+    canary="$(dc exec -T git-mcp sh -c '[ -f /tmp/CANARY-FIRED ] && echo FIRED || echo NOT-FIRED' 2>&1)"
+    remote_after_hookcheck="$(ls_remote "$hook_branch")"
+
+    if [ "$canary" = "NOT-FIRED" ] && printf '%s' "$remote_after_hookcheck" | grep -q "refs/heads/${hook_branch}"; then
+      record step10.hook-immune pass \
+        "a hostile core.hooksPath on the gateway never fires during push_request/approve, and the real push still succeeded" \
+        "$remote_after_hookcheck"
+    elif [ "$canary" = "FIRED" ]; then
+      record step10.hook-immune fail \
+        "a hostile core.hooksPath on the gateway never fires during push_request/approve" \
+        "CANARY-FIRED was created - the planted pre-push hook executed inside git-mcp"
+    else
+      record step10.hook-immune fail \
+        "a hostile core.hooksPath on the gateway never fires during push_request/approve" \
+        "hook did not fire, but the push itself didn't reach the remote either: $remote_after_hookcheck"
+    fi
+  fi
+
+  # Cleanup regardless of outcome - don't leave a live hooksPath override or
+  # canary file sitting in a container someone might inspect by hand later.
+  dc exec -T git-mcp sh -c "
+    git --git-dir='${gateway_path}' config --unset core.hooksPath 2>/dev/null;
+    rm -rf /tmp/evil-hooks /tmp/CANARY-FIRED
+  " >/dev/null 2>&1
   fi
 fi
 

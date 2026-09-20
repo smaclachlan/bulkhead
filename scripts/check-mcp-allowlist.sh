@@ -51,6 +51,14 @@ ALLOWLIST = {
         "url": "http://workspace-mcp:8801/mcp",
         "tools": ["exec"],
     },
+    # workspace-mcp admin port (docs/adr/0004-git-mcp-bundle-relay.md) -
+    # reachable from orchestrator over internal-workspace but never
+    # registered in mcp_agent.config.yaml/server_names, same exclusion
+    # pattern as git-mcp-admin below.
+    "workspace-mcp-admin": {
+        "url": "http://workspace-mcp:8807/mcp",
+        "tools": sorted(["export_bundle", "import_bundle"]),
+    },
     "memory-mcp": {
         "url": "http://memory-mcp:8803/mcp",
         "tools": sorted([
@@ -59,18 +67,12 @@ ALLOWLIST = {
             "read_graph", "search_nodes", "open_nodes",
         ]),
     },
-    # git-mcp LLM-facing port (docs/adr/0003-phase-3-git-mcp.md Decision 2)
-    # - push_request only stages a request, it must never be push_execute.
-    # fetch is the one other tool here that reaches the network - read
-    # direction only, against the one pre-configured remote (see that ADR
-    # git_fetch follow-up note and the fetch tool docstring in server.py).
+    # git-mcp LLM-facing port (docs/adr/0004-git-mcp-bundle-relay.md) - just
+    # fetch/push_request now; everything local moved to workspace_exec.
+    # push_request only stages a request, it must never be push_execute.
     "git-mcp": {
         "url": "http://git-mcp:8805/mcp",
-        "tools": sorted([
-            "status", "diff", "log", "branch_list",
-            "commit", "create_branch", "checkout", "push_request",
-            "show", "remote", "rev_parse", "merge_base", "tag_list", "fetch",
-        ]),
+        "tools": sorted(["fetch", "push_request"]),
     },
     # git-mcp admin port - reachable from orchestrator over the network
     # (internal-git) but never registered in mcp_agent.config.yaml/
@@ -79,7 +81,10 @@ ALLOWLIST = {
     # every other server - not a claim that this port is unreachable.
     "git-mcp-admin": {
         "url": "http://git-mcp:8806/mcp",
-        "tools": sorted(["pending_push", "push_execute", "push_cancel"]),
+        "tools": sorted([
+            "pending_push", "push_execute", "push_cancel",
+            "export_bundle", "import_bundle",
+        ]),
     },
 }
 

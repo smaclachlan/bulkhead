@@ -1,22 +1,24 @@
-"""Git MCP: code egress - see README's "Egress" section and
-docs/adr/0003-phase-3-git-mcp.md.
+"""Git MCP: code egress - see README's "Egress" section,
+docs/adr/0003-phase-3-git-mcp.md, and docs/adr/0004-git-mcp-bundle-relay.md
+(the bare-mirror-gateway rework this file now reflects).
 
 Runs two separate MCPServer instances on two ports in one process, sharing
 one GitState (same shape Chat MCP already uses for its MCP port + web UI
 port - see chat-mcp/src/chat_mcp/server.py):
 
-  - port 8805 ("llm" server): status/diff/log/branch_list/commit/
-    create_branch/checkout/push_request/show/remote/rev_parse/merge_base/
-    tag_list/fetch - registered in the Orchestrator's mcp_agent.config.yaml
-    and attached via server_names, so these are the only Git MCP tools the
-    LLM can call. All but `fetch` and `push_request` are local-only (no
-    network); `fetch` is read-direction-only against the one pre-configured
-    remote - see its own tool docstring below and docs/adr/0003-phase-3-git-mcp.md.
-  - port 8806 ("admin" server): pending_push/push_execute/push_cancel -
-    deliberately NEVER registered in mcp_agent.config.yaml/server_names.
-    Reached only by orchestrator/src/orchestrator/git_admin_client.py's
-    hand-rolled client, called directly by the harness loop after a human
-    approves or denies a pending push in chat. This split - not a per-tool
+  - port 8805 ("llm" server): fetch/push_request only - registered in the
+    Orchestrator's mcp_agent.config.yaml and attached via server_names, so
+    these are the only Git MCP tools the LLM can call. Everything that used
+    to live here (status/diff/log/commit/checkout/etc., ADR-0003 Decision 2)
+    moved to the Workspace, which now has git installed - see
+    docs/adr/0004-git-mcp-bundle-relay.md for why.
+  - port 8806 ("admin" server): pending_push/push_execute/push_cancel plus
+    the two bundle-relay tools (import_bundle/export_bundle) - deliberately
+    NEVER registered in mcp_agent.config.yaml/server_names. Reached only by
+    orchestrator/src/orchestrator/git_admin_client.py's hand-rolled client,
+    called directly by the harness loop: push_execute after a human approves
+    a pending push, and the bundle tools on every turn to keep the gateway
+    and the Workspace's local branches in sync. This split - not a per-tool
     filter, which mcp-agent doesn't have - is what keeps push_execute
     structurally unreachable by the LLM. See ADR-0003 Decision 3.
 """
@@ -38,109 +40,26 @@ admin_mcp = MCPServer("git-mcp-admin", version="0.1.0")
 # -- LLM-facing tools (ungated per README's Egress section) -----------------
 
 
-@llm_mcp.tool(name="status")
-async def status() -> dict:
-    """Show the working tree's status (git status --short --branch)."""
-    return asdict(await STATE.status())
-
-
-@llm_mcp.tool(name="diff")
-async def diff(path: str = "", rev_range: str = "") -> dict:
-    """Show changes, optionally scoped to one path. With no rev_range, shows
-    unstaged working-tree changes (unchanged default). Set rev_range to diff
-    two points in history instead, e.g. "abc123..def456" - anything `git
-    diff` itself accepts there."""
-    return asdict(await STATE.diff(path or None, rev_range or None))
-
-
-@llm_mcp.tool(name="log")
-async def log(limit: int = 20, path: str = "", stat: bool = False) -> dict:
-    """Show recent commit history (git log --oneline), optionally scoped to
-    one path and/or with per-commit file-change stats (--stat)."""
-    return asdict(await STATE.log(limit, path or None, stat))
-
-
-@llm_mcp.tool(name="branch_list")
-async def branch_list(contains: str = "") -> dict:
-    """List local and remote-tracking branches, optionally filtered to only
-    those containing a given commit (git branch -a --contains <rev>)."""
-    return asdict(await STATE.branch_list(contains or None))
-
-
-@llm_mcp.tool(name="show")
-async def show(rev: str, path: str = "") -> dict:
-    """Show what a specific commit itself changed (git show <rev>),
-    optionally scoped to one path. Use this to inspect a past commit -
-    `diff` only covers the current unstaged working-tree state."""
-    return asdict(await STATE.show(rev, path or None))
-
-
-@llm_mcp.tool(name="remote")
-async def remote() -> dict:
-    """Show the configured remote(s) and their URLs (git remote -v) - purely
-    informational; doesn't change what push_request/fetch are allowed to
-    target (that's still GIT_REMOTE_NAME/GIT_PUSH_BRANCH_PATTERN server-side)."""
-    return asdict(await STATE.remote())
-
-
-@llm_mcp.tool(name="rev_parse")
-async def rev_parse(rev: str) -> dict:
-    """Resolve a ref/commit-ish (branch name, tag, HEAD~2, etc.) to its full SHA."""
-    return asdict(await STATE.rev_parse(rev))
-
-
-@llm_mcp.tool(name="merge_base")
-async def merge_base(rev_a: str, rev_b: str = "HEAD") -> dict:
-    """Find the common-ancestor commit of two refs (git merge-base) - use
-    this with `log`/`rev_parse` to work out how two branches have diverged."""
-    return asdict(await STATE.merge_base(rev_a, rev_b))
-
-
-@llm_mcp.tool(name="tag_list")
-async def tag_list() -> dict:
-    """List tags (git tag -l), most recently created first."""
-    return asdict(await STATE.tag_list())
-
-
 @llm_mcp.tool(name="fetch")
 async def fetch() -> dict:
-    """Update remote-tracking refs (e.g. origin/main) from the
-    pre-configured remote. Read-only against the remote - fetches, never
-    pushes, and only ever the one already-configured remote, never an
-    arbitrary URL. Run this before trusting status/log/branch_list against a
-    remote branch, since remote-tracking refs otherwise go stale."""
+    """Refresh the gateway's view of every branch/tag from the pre-configured
+    remote. Read-only against the remote - fetches, never pushes, and only
+    ever the one already-configured remote, never an arbitrary URL. Call
+    this before relying on the remote's current state; the harness syncs
+    whatever this brings down back into the Workspace after your turn."""
     return asdict(await STATE.fetch())
-
-
-@llm_mcp.tool(name="commit")
-async def commit(message: str) -> dict:
-    """Stage all changes and commit them locally. Never crosses the network
-    boundary - see README's Egress section: local git work isn't gated."""
-    return asdict(await STATE.commit(message))
-
-
-@llm_mcp.tool(name="create_branch")
-async def create_branch(name: str) -> dict:
-    """Create a new local branch (does not switch to it)."""
-    return asdict(await STATE.create_branch(name))
-
-
-@llm_mcp.tool(name="checkout")
-async def checkout(name: str) -> dict:
-    """Switch to a branch - an existing local one, or (if not found locally
-    but present on the remote) a remote-tracking branch, which git creates a
-    local branch tracking automatically. Run `fetch` first if the remote
-    branch may be newer than this checkout's last fetch."""
-    return asdict(await STATE.checkout(name))
 
 
 @llm_mcp.tool(name="push_request")
 async def push_request(branch: str) -> dict:
-    """Stage a request to push the current HEAD to `branch` on the
-    pre-configured remote. Does NOT push - a human must approve this in chat
-    before orchestrator/git_admin_client.py calls push_execute. `branch`
-    must match the server-configured GIT_PUSH_BRANCH_PATTERN or this is
-    rejected before anything is staged - see ADR-0003 Decision 3/4."""
+    """Stage a request to push your Workspace-local branch `branch` to the
+    same-named branch on the pre-configured remote. Does NOT push - a human
+    must approve this in chat before the harness calls push_execute.
+    `branch` must match the server-configured GIT_PUSH_BRANCH_PATTERN or
+    this is rejected before anything is staged - see ADR-0003 Decision 3/4.
+    The harness syncs your latest commits into the gateway immediately
+    before staging and again immediately before executing, so there's no
+    need to call anything else first."""
     try:
         pending = await STATE.push_request(branch)
     except GitError as exc:
@@ -170,6 +89,22 @@ async def push_execute(request_id: str) -> dict:
 async def push_cancel(request_id: str) -> dict:
     """Cancel a pending push (human denied it). Harness-only."""
     return {"ok": await STATE.cancel(request_id)}
+
+
+@admin_mcp.tool(name="export_bundle")
+async def export_bundle(refspec: str) -> dict:
+    """Bundle refs matching `refspec` (a ref pattern, e.g. `refs/heads/*`)
+    out of the gateway repo, base64-encoded. Harness-only - see
+    docs/adr/0004-git-mcp-bundle-relay.md."""
+    return await STATE.export_bundle(refspec)
+
+
+@admin_mcp.tool(name="import_bundle")
+async def import_bundle(data_b64: str, refspec: str) -> dict:
+    """Absorb a base64 bundle into the gateway repo's refs per `refspec` (a
+    src:dst fetch refspec, e.g. `+refs/heads/*:refs/heads/*`). Harness-only -
+    see docs/adr/0004-git-mcp-bundle-relay.md."""
+    return asdict(await STATE.import_bundle(data_b64, refspec))
 
 
 async def _run() -> None:
