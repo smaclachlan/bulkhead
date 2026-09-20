@@ -40,10 +40,16 @@ async def sync_to_workspace(workspace_admin: WorkspaceAdminClient, git_admin: Gi
     a turn that may have called git_fetch, so the agent's next `git log`/
     `git checkout` via workspace_exec can see what was fetched. Lands under
     refs/remotes/origin/*, never refs/heads/* - this must never silently
-    move a local branch the agent has checked out."""
+    move a local branch the agent has checked out.
+
+    Always calls workspace_admin.import_bundle, even with nothing to import
+    (confirmed live: this is the *only* thing that ever `git init`s the
+    Workspace's /repo - import_bundle runs `git init -q` before its fetch,
+    workspace-mcp's `exec` tool never touches git at all). Skipping this
+    call whenever the gateway had nothing to export yet - the state of a
+    brand-new/empty remote on the very first turn - left /repo uninitialized
+    and every local `git commit` via workspace_exec failed with "not a git
+    repository" before the agent ever got a chance to create one."""
     exported = await git_admin.export_bundle(_EXPORT_SELECTOR)
-    if _bundle_is_empty(exported):
-        return
-    await workspace_admin.import_bundle(
-        exported["data_b64"], "+refs/heads/*:refs/remotes/origin/*"
-    )
+    data_b64 = "" if _bundle_is_empty(exported) else exported["data_b64"]
+    await workspace_admin.import_bundle(data_b64, "+refs/heads/*:refs/remotes/origin/*")

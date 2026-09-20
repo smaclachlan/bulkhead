@@ -56,6 +56,20 @@ from .chat_client import ChatClient
 from .git_admin_client import GitAdminClient
 from .workspace_admin_client import WorkspaceAdminClient
 
+async def _sync(direction, workspace_admin, git_admin) -> None:
+    # bundle_sync's three call sites all used to await it unguarded - an
+    # exception there (a transient MCP call failure, say) would propagate
+    # straight out of the `while True` loop and past asyncio.run in main()
+    # below, killing the whole orchestrator process rather than just this
+    # one sync. Caught and logged instead; a skipped sync self-heals next
+    # turn (both directions run every turn regardless of whether the last
+    # one succeeded) rather than taking the harness down.
+    try:
+        await direction(workspace_admin, git_admin)
+    except Exception as exc:  # noqa: BLE001 - log and keep the loop alive
+        print(f"[orchestrator] bundle sync ({direction.__name__}) failed: {exc!r}")
+
+
 SYSTEM_INSTRUCTION = """
 You are Bulkhead's Orchestrator agent. Your only way to run commands is the
 workspace_exec tool, which runs a shell command inside a fully
@@ -180,7 +194,7 @@ async def run() -> None:
                         # this approve are two separate human turns - the
                         # agent's branch may not have existed in the gateway
                         # yet when this request was staged.
-                        await bundle_sync.sync_to_gateway(workspace_admin, git_admin)
+                        await _sync(bundle_sync.sync_to_gateway, workspace_admin, git_admin)
                         result = await git_admin.execute(request_id)
                         if result["exit_code"] == 0:
                             reply = f"Pushed. \n{result['stdout']}{result['stderr']}".strip()
@@ -201,7 +215,7 @@ async def run() -> None:
                 # Bring /repo's origin/* remote-tracking refs up to date with
                 # whatever the gateway already knows before the agent acts -
                 # see bundle_sync.py and docs/adr/0004-git-mcp-bundle-relay.md.
-                await bundle_sync.sync_to_workspace(workspace_admin, git_admin)
+                await _sync(bundle_sync.sync_to_workspace, workspace_admin, git_admin)
 
                 try:
                     await chat.set_status("working")
@@ -217,8 +231,8 @@ async def run() -> None:
                     # push_request this turn has something to stage against),
                     # then pull down anything a git_fetch this turn brought
                     # in, so the next turn's workspace_exec sees it.
-                    await bundle_sync.sync_to_gateway(workspace_admin, git_admin)
-                    await bundle_sync.sync_to_workspace(workspace_admin, git_admin)
+                    await _sync(bundle_sync.sync_to_gateway, workspace_admin, git_admin)
+                    await _sync(bundle_sync.sync_to_workspace, workspace_admin, git_admin)
                     pending = await git_admin.pending()
                     if pending:
                         reply += _pending_notice(pending)

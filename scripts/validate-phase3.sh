@@ -170,7 +170,11 @@ volume_marker="bulkhead-isolation-check-$(date +%s)"
 gateway_path="$(dc exec -T git-mcp printenv GIT_GATEWAY_PATH 2>/dev/null | tr -d '[:space:]')"
 [ -n "$gateway_path" ] || gateway_path="/gitdir"
 dc exec -T git-mcp sh -c "echo should-not-cross > ${gateway_path}/${volume_marker}" >/dev/null 2>&1
-seen="$(dc exec -T workspace sh -c "cat /repo/${volume_marker} 2>&1; find / -xdev -name '${volume_marker}' 2>/dev/null")"
+# 2>/dev/null on the `cat`, not 2>&1 - the expected-to-fail case is the
+# passing case here, and capturing its "No such file" stderr text would
+# make $seen non-empty even when nothing actually leaked (confirmed live:
+# that's exactly what happened before this fix - a false FAIL).
+seen="$(dc exec -T workspace sh -c "cat /repo/${volume_marker} 2>/dev/null; find / -xdev -name '${volume_marker}' 2>/dev/null")"
 
 if [ -z "$seen" ]; then
   record step3.no-shared-volume pass "a file written into git-mcp's gateway path is NOT visible anywhere in workspace"
