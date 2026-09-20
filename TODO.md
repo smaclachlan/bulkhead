@@ -45,13 +45,25 @@ Ordered easiest → hardest to execute.
   effort to scope, but the outcome could mean a real rewrite of
   orchestrator/src/orchestrator/main.py.
 
-- Easy switching between models/agents - list of supported backends?
-  Today .env.example only wires a single `ANTHROPIC_API_KEY` for the
-  orchestrator's LLM calls - no model selection surface exists at all.
-  Bounded scope: add a config/env var for model id, thread it through
-  wherever the Anthropic client is constructed, expose it in the chat UI.
-  No architectural blockers, just needs the client construction point(s)
-  found and parameterized.
+- Easy switching between models/agents - including any OpenAI-compatible API
+  Genuinely well-scoped, not just hoped-for: ADR-0001 §7 already flagged
+  this as deferred rather than decided - "mcp-agent's provider config
+  should support both API-key and OAuth-based providers... provider
+  abstraction is mcp-agent's job, not something phase 1 needs to prove
+  twice." The actual lock-in today is narrow and precisely located:
+  orchestrator/src/orchestrator/main.py hardcodes
+  `from mcp_agent.workflows.llm.augmented_llm_anthropic import
+  AnthropicAugmentedLLM` and `agent.attach_llm(AnthropicAugmentedLLM)`, and
+  mcp_agent.config.yaml has one Anthropic-specific `anthropic:` block
+  (`default_model: claude-sonnet-5`). Swap that hardcoded class for a
+  config-driven choice and, since the underlying `openai` Python SDK
+  universally supports a `base_url` override, "any OpenAI-compatible API"
+  (self-hosted vLLM/Ollama, OpenRouter, etc.) comes along for free once
+  that's wired - no per-provider special-casing needed beyond mcp-agent's
+  own OpenAI LLM class (needs confirming it's actually shipped in the
+  pinned `mcp-agent>=0.2.6,<0.3`, but this is a framework capability to
+  route through, not something to build). `.env.example`/chat UI exposure
+  for the choice is the same bounded follow-up work either way.
 
 - Make the whole MCP system more modular? Is this possible as we are
   locking down MCP's more...
