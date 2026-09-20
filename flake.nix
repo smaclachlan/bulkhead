@@ -386,11 +386,43 @@
                   *) env_file="$arg" ;;
                 esac
               done
+              if [ ! -f "$env_file" ]; then
+                echo "env file '$env_file' not found" >&2
+                exit 1
+              fi
+              # Needed for WORKSPACE_HOST_PATH below - profile.sh alone only
+              # derives names, it doesn't load the file's own values (see
+              # the `up` app above for the same pattern).
+              set -a
+              . "$env_file"
+              set +a
               . scripts/lib/profile.sh
               bulkhead_resolve_profile "$env_file" || exit 1
               project_name="$BULKHEAD_PROJECT_NAME"
-              repo_volume="''${project_name}_workspace-repo"
               gateway_volume="''${project_name}_git-gateway-data"
+              dc() { ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" "$@"; }
+
+              # WORKSPACE_HOST_PATH (docker-compose.yml) makes the working
+              # tree a host bind mount instead of the workspace-repo named
+              # volume - there's nothing Docker-managed to wipe there, and
+              # deleting a user's own host directory is a different, far
+              # scarier operation than this command is meant to do silently.
+              # Only the gateway mirror gets reset in that case.
+              if [ -n "''${WORKSPACE_HOST_PATH:-}" ]; then
+                echo "WORKSPACE_HOST_PATH is set ($WORKSPACE_HOST_PATH) - the working tree is a host bind mount, not a volume this command can wipe. Reset/re-clone that directory yourself." >&2
+                if [ -z "$yes" ]; then
+                  printf 'This still destroys the "%s" volume (git-mcp'"'"'s gateway mirror) and re-clones it from the remote. Type "yes" to continue: ' "$gateway_volume" >&2
+                  read -r confirm
+                  [ "$confirm" = "yes" ] || { echo "aborted" >&2; exit 1; }
+                fi
+                echo "== Stopping git-mcp, wiping $gateway_volume, recreating fresh ==" >&2
+                dc stop git-mcp
+                ${pkgs.docker}/bin/docker volume rm "$gateway_volume"
+                dc up -d --force-recreate git-mcp
+                exit 0
+              fi
+
+              repo_volume="''${project_name}_workspace-repo"
 
               if [ -z "$yes" ]; then
                 printf 'This destroys the "%s" and "%s" volumes (any uncommitted/unpushed work in /repo, and git-mcp'"'"'s gateway mirror) and re-clones both from the remote. Type "yes" to continue: ' "$repo_volume" "$gateway_volume" >&2
@@ -398,7 +430,6 @@
                 [ "$confirm" = "yes" ] || { echo "aborted" >&2; exit 1; }
               fi
 
-              dc() { ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" "$@"; }
               echo "== Stopping workspace/git-mcp, wiping $repo_volume and $gateway_volume, recreating fresh ==" >&2
               dc stop workspace git-mcp
               ${pkgs.docker}/bin/docker volume rm "$repo_volume" "$gateway_volume"

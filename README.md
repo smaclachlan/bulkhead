@@ -74,7 +74,7 @@ Every Bulkhead setting lives in one `.env`-format file - copy `.env.example` to 
 - `ANTHROPIC_API_KEY` - required; the Orchestrator's LLM calls.
 - `CHAT_MCP_TOKEN` - pin the Chat UI's access token instead of a fresh random one per boot (either way it's printed by `nix run .#up` / visible in `docker compose logs chat-mcp`).
 - `CHAT_SHOW_TOOL_CALLS` - off by default, so the chat transcript only shows the agent's actual replies. Set to `1`/`true`/`yes` to keep the underlying `[Calling tool X with args Y]` notices mcp-agent bakes into its output - both the browser UI and `nix run .#chat` render those lines in italics so they're still visually distinct from the real reply.
-- `WORKSPACE_RUNTIME`, `WORKSPACE_DOCKERFILE_DIR`, `WORKSPACE_REPO_PATH` - see [Custom workspace image](#custom-workspace-image) and [Kata Containers setup](#kata-containers-setup-phase-2-workspace-container).
+- `WORKSPACE_RUNTIME`, `WORKSPACE_DOCKERFILE_DIR`, `WORKSPACE_REPO_PATH`, `WORKSPACE_HOST_PATH` - see [Custom workspace image](#custom-workspace-image) and [Kata Containers setup](#kata-containers-setup-phase-2-workspace-container).
 - `CHAT_UI_HOST_PORT` - see [Profiles](#profiles---running-multiple-concurrent-stacks).
 - `GIT_REMOTE_URL`, `GIT_SSH_DEPLOY_KEY_HOST_PATH`, `GIT_PUSH_BRANCH_PATTERN` - see [Git MCP setup](#git-mcp-setup-phase-3-code-egress).
 
@@ -86,8 +86,9 @@ The default Workspace image (`workspace/default.nix`) is deliberately minimal - 
 
 - `WORKSPACE_DOCKERFILE_DIR` - a directory containing your own Dockerfile. When set, `nix run .#up` builds it as the Workspace image instead of the Nix one. Whatever that image's own `CMD`/`ENTRYPOINT` is, it never runs - `docker-compose.yml` overrides the container's command to just idle (`sh -c "sleep infinity"`), since `workspace-mcp` only ever `docker exec`s into it, never `docker run`s per command. This means the image needs a POSIX shell and `sleep` present; essentially any real base distro has both. Since [ADR-0004](docs/adr/0004-git-mcp-bundle-relay.md), it also needs `git` for local git ops to work at all, and benefits from `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` set (see `workspace/default.nix` for the defaults the Nix image uses) so `git commit` has an identity to commit as without any interactive `git config`.
 - `WORKSPACE_REPO_PATH` - where the working tree (a volume exclusive to `workspace` - `git-mcp` never mounts it, see ADR-0004) is mounted. Defaults to `/repo`; override it if your Dockerfile's tooling expects the project root somewhere else.
+- `WORKSPACE_HOST_PATH` - by default the working tree lives in an internal-only Docker-managed named volume; set this to a host directory to bind-mount it there instead (e.g. a large existing checkout you don't want to `git clone` into the volume from scratch). This is a deliberate security relaxation - the container, and anything a compromised build/test/hook run inside it does, then has direct read/write access to that host path, not just an isolated volume. Leave unset unless you need it.
 
-One thing this doesn't solve for you: if your custom image runs as a non-root user, check that user can actually read/write this volume, or `git init`/`git commit` inside it will fail with permission errors rather than an obvious "wrong config" message.
+One thing this doesn't solve for you: if your custom image runs as a non-root user (the default Nix image now does too - see `workspace/default.nix`), check that user can actually read/write this path, or `git init`/`git commit` inside it will fail with permission errors rather than an obvious "wrong config" message. This matters more with `WORKSPACE_HOST_PATH` set - a bind-mounted directory keeps its host-side ownership, unlike the named-volume default, which the image pre-chowns.
 
 #### Vendoring private git dependencies at build time (e.g. `west update`)
 

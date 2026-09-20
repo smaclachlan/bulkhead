@@ -110,8 +110,22 @@ services:
     # git-mcp's deploy key. git-mcp exchanges `git bundle` files with this
     # repo via workspace-mcp's admin port instead of sharing a filesystem
     # with it - see docs/adr/0004-git-mcp-bundle-relay.md.
+    #
+    # Source defaults to the named volume `workspace-repo` (declared below) -
+    # fully internal to Docker, no host filesystem exposed. Set
+    # WORKSPACE_HOST_PATH to a host directory instead (e.g. for a large
+    # existing checkout you don't want to `git clone` into the volume) and
+    # Compose's short-syntax volume source switches from a named volume to
+    # a bind mount, same ambiguity Compose always resolves this way. This is
+    # a deliberate security relaxation: the container (and anything a
+    # compromised build/test/hook run in it does) then has read/write access
+    # to that host path, not just an isolated Docker-managed volume. Also
+    # note this container runs as a fixed non-root UID (workspace/default.nix)
+    # - a bind-mounted host directory keeps its host-side ownership, which
+    # that UID may not have write access to; the named-volume default has no
+    # such issue since the image pre-chowns it.
     volumes:
-      - workspace-repo:${WORKSPACE_REPO_PATH:-/repo}
+      - ${WORKSPACE_HOST_PATH:-workspace-repo}:${WORKSPACE_REPO_PATH:-/repo}
     restart: on-failure
 
   # Scoped Docker-socket proxy, fronting the raw socket for workspace-mcp.
