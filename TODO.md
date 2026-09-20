@@ -1,0 +1,8 @@
+- Add skills support (.claude etc)
+- Drop priviledges of all containers - currently all root
+- Make the whole MCP system more modular? Is this possible as we are locking down MCP's more...
+- Editor integration - VSCode or similar?
+- Improve chat interface to be more like Claude Code CLI
+- Easy switching between models/agents - list of supported backends?
+- Claude OAUTH... Will this be possible?
+- Batch or concurrent commands from agent to Workspace?  Look at speeding up commands/multiple agents running at once
