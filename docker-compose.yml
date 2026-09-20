@@ -123,9 +123,16 @@ services:
     # note this container runs as a fixed non-root UID (workspace/default.nix)
     # - a bind-mounted host directory keeps its host-side ownership, which
     # that UID may not have write access to; the named-volume default has no
-    # such issue since the image pre-chowns it.
+    # such issue since the image pre-chowns it. See WORKSPACE_USER below.
     volumes:
       - ${WORKSPACE_HOST_PATH:-workspace-repo}:${WORKSPACE_REPO_PATH:-/repo}
+    # Empty by default - Docker then falls back to the image's own user
+    # (10001:10001 for the default Nix image; whatever a custom
+    # WORKSPACE_DOCKERFILE_DIR's own Dockerfile sets, root included). Only
+    # meaningful with WORKSPACE_HOST_PATH set, to match the bind-mounted
+    # host directory's owner - `nix run .#up` auto-fills this from the
+    # invoking user's own uid:gid in that case if left unset (see flake.nix).
+    user: "${WORKSPACE_USER:-}"
     restart: on-failure
 
   # Scoped Docker-socket proxy, fronting the raw socket for workspace-mcp.

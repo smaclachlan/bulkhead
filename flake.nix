@@ -151,6 +151,20 @@
               # images aren't namespaced this way.
               export WORKSPACE_IMAGE="$BULKHEAD_WORKSPACE_IMAGE"
 
+              # WORKSPACE_USER (docker-compose.yml's `user:` on the
+              # workspace service) only matters with WORKSPACE_HOST_PATH set
+              # - a bind-mounted host directory keeps its host-side
+              # ownership, which workspace's baked-in UID (10001, see
+              # workspace/default.nix) generally won't have write access to.
+              # Auto-default to the invoking user's own uid:gid in that case
+              # unless the env file already set WORKSPACE_USER explicitly -
+              # covers the common case (bind-mounting your own checkout)
+              # with no config needed.
+              if [ -n "''${WORKSPACE_HOST_PATH:-}" ] && [ -z "''${WORKSPACE_USER:-}" ]; then
+                export WORKSPACE_USER="$(id -u):$(id -g)"
+                echo "== WORKSPACE_HOST_PATH set, no WORKSPACE_USER given - defaulting workspace's container user to $WORKSPACE_USER (yours) ==" >&2
+              fi
+
               # Every docker-compose call from here on goes through this, so
               # Compose's own ''${VAR} interpolation always resolves against
               # the same file this script just sourced for its own decisions
@@ -356,6 +370,20 @@
                 exit 1
               fi
               env_file="''${1:-.env}"
+              if [ ! -f "$env_file" ]; then
+                echo "env file '$env_file' not found" >&2
+                exit 1
+              fi
+              # Same WORKSPACE_USER auto-default as `up` (see its own
+              # comment above) - needed here too, or a container recreated
+              # via this command silently loses the auto-detected uid:gid
+              # and falls back to the image's own baked-in user.
+              set -a
+              . "$env_file"
+              set +a
+              if [ -n "''${WORKSPACE_HOST_PATH:-}" ] && [ -z "''${WORKSPACE_USER:-}" ]; then
+                export WORKSPACE_USER="$(id -u):$(id -g)"
+              fi
               . scripts/lib/profile.sh
               bulkhead_resolve_profile "$env_file" || exit 1
               project_name="$BULKHEAD_PROJECT_NAME"
