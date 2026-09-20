@@ -41,7 +41,9 @@
             if [ "''${1:-}" = "--no-cache" ]; then
               no_cache="--no-cache"
             fi
-            exec ${pkgs.docker}/bin/docker build $no_cache -t ${tag} ${dir}
+            # Same label the `up` app's builds carry - see its own comment -
+            # so `nix run .#prune-images` finds this one too.
+            exec ${pkgs.docker}/bin/docker build $no_cache --label bulkhead=1 -t ${tag} ${dir}
           '');
         };
       in
@@ -163,9 +165,42 @@
                 ${pkgs.docker-compose}/bin/docker-compose -p "$project_name" --env-file "$env_file" "$@"
               }
 
+              # BuildKit for every docker build below - required for
+              # --secret (WORKSPACE_BUILD_SECRET_HOST_PATH just below), and
+              # a strict improvement over the legacy builder either way for
+              # the plain Dockerfiles here (no BuildKit-only syntax used, so
+              # no behavior change for the five control-plane images).
+              export DOCKER_BUILDKIT=1
+              # Every image this script builds gets this label, purely so
+              # `nix run .#prune-images` can find and remove the dangling
+              # (superseded, untagged) layers repeated rebuilds leave behind
+              # without touching images from unrelated projects on the same
+              # Docker daemon. Not applied to the Nix-built default
+              # workspace image path below (docker load/tag has no --label
+              # equivalent; that path doesn't carry large vendored-dependency
+              # layers the way a custom WORKSPACE_DOCKERFILE_DIR can, so it's
+              # a smaller gap).
+              bulkhead_label="--label bulkhead=1"
+
               if [ -n "''${WORKSPACE_DOCKERFILE_DIR:-}" ]; then
                 echo "== Building workspace image from WORKSPACE_DOCKERFILE_DIR=$WORKSPACE_DOCKERFILE_DIR ==" >&2
-                ${pkgs.docker}/bin/docker build $no_cache -t "$WORKSPACE_IMAGE" "$WORKSPACE_DOCKERFILE_DIR"
+                # WORKSPACE_BUILD_SECRET_HOST_PATH (optional) - a file on the
+                # host holding a build-time-only credential (e.g. a GitHub
+                # PAT for a private git dependency fetched during the build,
+                # such as `west update`) - see README's "Custom workspace
+                # image" section for the Dockerfile-side RUN --mount=type=secret
+                # pattern that consumes it. Passed via BuildKit's --secret,
+                # not --build-arg or a file copied into the build context:
+                # --secret is mounted only for the one RUN instruction that
+                # declares it and is never written to any image layer or
+                # left in `docker history`, so the token never reaches the
+                # image, the container filesystem, or anything at runtime.
+                secret_args=""
+                if [ -n "''${WORKSPACE_BUILD_SECRET_HOST_PATH:-}" ]; then
+                  secret_id="''${WORKSPACE_BUILD_SECRET_ID:-workspace_build_token}"
+                  secret_args="--secret id=$secret_id,src=$WORKSPACE_BUILD_SECRET_HOST_PATH"
+                fi
+                ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label $secret_args -t "$WORKSPACE_IMAGE" "$WORKSPACE_DOCKERFILE_DIR"
               else
                 echo "== Building workspace-image via Nix (default minimal image; set WORKSPACE_DOCKERFILE_DIR in your env file for a custom one) ==" >&2
                 result_link="$(mktemp -u)"
@@ -188,11 +223,11 @@
               fi
 
               echo "== Building workspace-mcp, chat-mcp, orchestrator, memory-mcp, git-mcp images via Docker ==" >&2
-              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-workspace-mcp:dev workspace-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-chat-mcp:dev chat-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-orchestrator:dev orchestrator
-              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-memory-mcp:dev memory-mcp
-              ${pkgs.docker}/bin/docker build $no_cache -t bulkhead-git-mcp:dev git-mcp
+              ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label -t bulkhead-workspace-mcp:dev workspace-mcp
+              ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label -t bulkhead-chat-mcp:dev chat-mcp
+              ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label -t bulkhead-orchestrator:dev orchestrator
+              ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label -t bulkhead-memory-mcp:dev memory-mcp
+              ${pkgs.docker}/bin/docker build $no_cache $bulkhead_label -t bulkhead-git-mcp:dev git-mcp
 
               echo "== Starting docker compose (detached) ==" >&2
               dc up -d
@@ -368,6 +403,48 @@
               dc stop workspace git-mcp
               ${pkgs.docker}/bin/docker volume rm "$repo_volume" "$gateway_volume"
               dc up -d --force-recreate workspace git-mcp
+            '');
+          };
+
+          # Reclaims disk from superseded image builds - every `nix run
+          # .#up`/build-*-image rebuild that changes anything retags its
+          # image, leaving the previous build's now-untagged ("dangling")
+          # image behind rather than cleaning it up itself. Matters most for
+          # a custom WORKSPACE_DOCKERFILE_DIR that vendors a large git
+          # dependency tree at build time (see README's "Custom workspace
+          # image" section) - that layer can be sizeable, and a live-updated
+          # or frequently-rebuilt manifest means it accumulates fast.
+          #
+          # No profile argument - a dangling image is by definition untagged
+          # and unreferenced by any profile's current build, so this is safe
+          # to run regardless of which profile(s) are up, and reclaims all
+          # of them in one pass.
+          #
+          # Scoped by the `bulkhead=1` label every build in this flake
+          # applies (not to every dangling image on the host - this
+          # shouldn't touch unrelated projects' builds on the same Docker
+          # daemon). Only removes the *images* themselves - the underlying
+          # layers a superseded build shares with the current one (e.g. an
+          # unchanged base/toolchain layer earlier in the Dockerfile) stay
+          # shared and cached regardless, by ordinary Docker layer
+          # deduplication - nothing here needs to know which layers those
+          # are. Usage: nix run .#prune-images [--builder-cache]
+          prune-images = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "bulkhead-prune-images" ''
+              set -euo pipefail
+              builder_cache=""
+              for arg in "$@"; do
+                case "$arg" in
+                  --builder-cache) builder_cache="1" ;;
+                esac
+              done
+              echo "== Removing dangling Bulkhead-built images (label bulkhead=1) ==" >&2
+              ${pkgs.docker}/bin/docker image prune -f --filter "label=bulkhead=1"
+              if [ -n "$builder_cache" ]; then
+                echo "== Pruning the whole Docker builder cache (--builder-cache) - NOT scoped to Bulkhead: this reclaims build cache for every project using this Docker daemon, not just this one. Only pass this if you actually want that. ==" >&2
+                ${pkgs.docker}/bin/docker builder prune -f
+              fi
             '');
           };
         };

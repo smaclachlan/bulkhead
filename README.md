@@ -89,6 +89,49 @@ The default Workspace image (`workspace/default.nix`) is deliberately minimal - 
 
 One thing this doesn't solve for you: if your custom image runs as a non-root user, check that user can actually read/write this volume, or `git init`/`git commit` inside it will fail with permission errors rather than an obvious "wrong config" message.
 
+#### Vendoring private git dependencies at build time (e.g. `west update`)
+
+`workspace` has no network at all, so a build script that needs to fetch other repositories at runtime (Zephyr's `west update`, a multi-repo manifest, anything similar) can't do it inside the sandbox - and it shouldn't be able to, since that's the one property this whole project is built around. The fix is to do that fetch once, outside the sandbox, at `docker build` time, and bake the fully-resolved result into the image - `docker build` runs on the host before any of `docker-compose.yml`'s network segmentation exists, so it has ordinary internet access with no config needed.
+
+If some of those repositories are private, inject the credential via BuildKit's `--secret` rather than a `--build-arg` or a file copied into the build context - `--secret` is mounted only for the one `RUN` instruction that asks for it and is never written to any image layer or left in `docker history`, so it never reaches the image, the container filesystem, or anything at runtime. Two `.env` values wire this up (`.env.example` has the full comments):
+
+```
+WORKSPACE_BUILD_SECRET_HOST_PATH=/path/to/a/token-file   # never commit this
+WORKSPACE_BUILD_SECRET_ID=workspace_build_token          # must match your Dockerfile's --mount id
+```
+
+Your Dockerfile side, ordered for caching (last two points matter - see below):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git python3-pip \
+    && pip install west
+
+# Copy only the manifest, not the whole build context - this layer (and
+# everything below it) is only invalidated when the manifest itself
+# changes, not by an unrelated edit elsewhere in this directory.
+COPY west.yml /tmp/manifest/west.yml
+
+# Last step, and the only one touching the secret or the network. GIT_ASKPASS
+# reads the token live from the ephemeral secret mount on every git prompt -
+# the token itself is never written into ~/.gitconfig or any other file that
+# would persist into this layer.
+RUN --mount=type=secret,id=workspace_build_token,required=true \
+    printf '#!/bin/sh\ncat /run/secrets/workspace_build_token\n' > /usr/local/bin/git-askpass \
+    && chmod +x /usr/local/bin/git-askpass \
+    && GIT_ASKPASS=/usr/local/bin/git-askpass west init -m /tmp/manifest --local /repo \
+    && cd /repo && GIT_ASKPASS=/usr/local/bin/git-askpass west update \
+    && rm -f /usr/local/bin/git-askpass
+```
+
+Two things worth getting right, both about `docker build`'s layer cache rather than about security:
+
+- **Order matters for cost, not just style.** Put the expensive, network-heavy vendoring step last, after everything cheap and stable (base packages, toolchain installs). Docker's cache is strictly sequential - an earlier layer changing invalidates every layer after it regardless of whether that later layer's own inputs changed - so this only helps if the steps *before* the vendoring `RUN` are themselves stable. That's why the manifest is `COPY`'d on its own rather than the whole build context: a `COPY . .` earlier in the file would mean any unrelated edit anywhere in the directory forces a full re-fetch, quietly turning every `nix run .#up` into a slow, network-and-secret-requiring operation instead of an instant cache hit.
+- **`nix run .#up -- --no-cache` discards all of this.** Reserve it for when you actually need a from-scratch rebuild; routine `up`s should hit the cache and skip re-vendoring entirely.
+
+Every image `nix run .#up`/the `build-*-image` apps build carries a `bulkhead=1` label for exactly this scenario - a vendored dependency tree can be a large, unique layer, and each rebuild that changes anything leaves the previous one behind as a dangling, untagged image rather than cleaning it up on its own. `nix run .#prune-images` removes those (scoped to that label, so it won't touch unrelated images on the same Docker daemon); layers a superseded build shares with the current one - the unchanged base/toolchain layers, if the ordering above held - stay shared and cached regardless, by ordinary Docker layer deduplication. Add `--builder-cache` to also prune the whole BuildKit build cache, which is *not* scoped to Bulkhead and affects every project using that Docker daemon - only pass it if you mean to.
+
 ### Resetting the workspace
 
 Two commands, two different amounts of destruction:
