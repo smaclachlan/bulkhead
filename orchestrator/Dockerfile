@@ -23,4 +23,9 @@ ENV CHAT_MCP_URL=http://chat-mcp:8802/mcp
 # runtime (Compose env/secret) instead, so credentials never live in the
 # image. See mcp_agent.secrets.yaml.example.
 
+# Runs as non-root - no volumes, no shell tool wired in (see header comment
+# above), nothing here needs host-level access.
+RUN useradd --system --no-create-home --uid 10001 --shell /usr/sbin/nologin app
+USER app
+
 CMD ["python", "-m", "orchestrator.main"]

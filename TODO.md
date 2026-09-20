@@ -2,13 +2,38 @@
 
 Ordered easiest → hardest to execute.
 
-- Drop privileges of all containers - currently all root
-  No `user:` directive on any service in docker-compose.yml, so
-  workspace/workspace-mcp/memory-mcp/git-mcp/chat-mcp/orchestrator all run
-  as root by default. Fix is mechanical: add non-root `user:`/`USER` per
-  image, then re-check bind-mount and volume ownership (workspace's
-  git/build dirs especially) still work. Self-contained, no design
-  decisions, good first PR.
+- [mostly done] Drop privileges of all containers - currently all root
+  Done: workspace-mcp, chat-mcp, orchestrator, memory-mcp and workspace
+  (the default Nix image) all run as non-root now. The first four got
+  `USER` in their Dockerfiles (memory-mcp's /data also chowned before
+  `VOLUME` so the named volume seeds writable). workspace's default image
+  (workspace/default.nix) got `User = "10001:10001"` plus a
+  `fakeRootCommands` block that pre-owns `/repo` and sets `HOME=/repo` -
+  self-contained to that one file, so `WORKSPACE_DOCKERFILE_DIR` custom
+  profiles are untouched and can still run as root if their tooling needs
+  it. Belt-and-braces rather than load-bearing there - this container's
+  real containment is no network + optional Kata microVM, not the UID -
+  and it only covers the default `WORKSPACE_REPO_PATH` (`/repo`); a
+  custom path would need its own chown.
+  NOT changed, deliberately:
+    - git-mcp: docker-compose.yml already documents why (search
+      "Still runs as root" in that file) - dropping ALL capabilities was
+      tried and reverted because it also strips CAP_DAC_OVERRIDE, which
+      root needs to read the bind-mounted deploy key when its host-side
+      owner isn't UID 0. A non-root user here needs the deploy key's host
+      file ownership sorted out first (or a narrower cap_drop than ALL) -
+      real follow-up, not a drive-by change.
+    - docker-socket-proxy: third-party image (tecnativa/docker-socket-proxy)
+      that still proxies the live Docker socket. Forcing a `user:` override
+      without being able to verify against a running daemon (no docker
+      available in the environment this change was made in) risks silently
+      breaking the one path `exec` depends on. Needs testing with
+      `nix run .#up` before touching.
+  Not yet done for any of the five changed images: verifying the stack
+  actually still comes up (`nix run .#up` / `nix run .#validate-phase1`
+  or similar) - no docker/nix in this environment, so these changes are
+  unverified, workspace's `fakeRootCommands`/`enableFakechroot` build path
+  especially. Run the stack's validation before relying on this.
 
 - Investigate using Claude Code in the orchestrator instead of MCP-Agent
   orchestrator/ currently pins `mcp<2` specifically because `mcp-agent`

@@ -18,8 +18,20 @@ dockerTools.buildLayeredImage {
 
   contents = [ coreutils bashInteractive git ];
 
+  # Non-root, belt-and-braces on top of this container's real containment
+  # (no network, optional Kata microVM). Numeric UID:GID only, no /etc/passwd
+  # entry - nothing here needs a resolvable username. Only covers the
+  # default WORKSPACE_REPO_PATH (/repo); a custom one needs its own chown.
+  enableFakechroot = true;
+  fakeRootCommands = ''
+    mkdir -p /repo /tmp
+    chown 10001:10001 /repo
+    chmod 1777 /tmp
+  '';
+
   config = {
     Cmd = [ "/bin/sh" "-c" "sleep infinity" ];
+    User = "10001:10001";
     # `git commit`/hooks need an author identity; there's no human to run
     # `git config` interactively in here, and no on-disk gitconfig is set up
     # by default - GIT_AUTHOR_*/GIT_COMMITTER_* env vars satisfy git without
@@ -30,6 +42,9 @@ dockerTools.buildLayeredImage {
       "GIT_AUTHOR_EMAIL=bulkhead-agent@localhost"
       "GIT_COMMITTER_NAME=Bulkhead Agent"
       "GIT_COMMITTER_EMAIL=bulkhead-agent@localhost"
+      # No passwd entry to resolve a home dir from (see above) - point it
+      # somewhere writable so tools that assume $HOME exists don't fail.
+      "HOME=/repo"
     ];
   };
 }

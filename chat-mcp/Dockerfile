@@ -22,4 +22,9 @@ ENV CHAT_UI_PORT=8787
 
 EXPOSE 8802 8787
 
+# Runs as non-root - ChatState is in-memory only (state.py), no volumes or
+# host-level access needed.
+RUN useradd --system --no-create-home --uid 10001 --shell /usr/sbin/nologin app
+USER app
+
 CMD ["python", "-m", "chat_mcp.server"]

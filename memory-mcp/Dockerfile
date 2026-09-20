@@ -24,7 +24,15 @@ RUN npm install --omit=dev
 # docker-compose.yml mounts a named volume here.
 ENV MEMORY_FILE_PATH=/data/memory.jsonl
 ENV MEMORY_MCP_PORT=8803
+
+# /data must be owned by the non-root user *before* VOLUME is declared -
+# on first run Docker seeds a fresh named volume from whatever's baked into
+# the image at that path, ownership included, so this is what makes the
+# volume writable by `app` rather than root once mounted.
+RUN useradd --system --no-create-home --uid 10001 --shell /usr/sbin/nologin app \
+    && mkdir -p /data && chown app:app /data
 VOLUME ["/data"]
+USER app
 
 EXPOSE 8803
 

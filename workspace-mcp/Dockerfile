@@ -34,4 +34,12 @@ ENV WORKSPACE_MCP_PORT=8801
 
 EXPOSE 8801
 
+# Runs as non-root: this container talks to docker-socket-proxy over the
+# network (DOCKER_HOST=tcp://..., see docker-compose.yml) rather than
+# holding the Docker socket itself - ADR-0002 §3 moved that bind mount
+# to docker-socket-proxy - so it needs no host-level privilege to do its
+# job, just the docker-cli binary and network reachability.
+RUN useradd --system --no-create-home --uid 10001 --shell /usr/sbin/nologin app
+USER app
+
 CMD ["python", "-m", "workspace_mcp.server"]
