@@ -23,6 +23,8 @@
   #presence .dot.stale { background: #cc4b37; }
   #presence .activity { font-style: italic; }
   .msg .tool-call { font-style: italic; }
+  .msg .ts { display: block; font-size: 0.7rem; color: #888; margin-top: 0.15rem; }
+  .msg.user .ts { text-align: right; }
 </style>
 </head>
 <body>
@@ -71,6 +73,10 @@ function renderMessage(m) {
     }
   });
   div.appendChild(bubble);
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = new Date(m.ts * 1000).toLocaleTimeString();
+  div.appendChild(ts);
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 }

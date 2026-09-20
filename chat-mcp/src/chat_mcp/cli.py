@@ -67,6 +67,19 @@ def _format_reply(text: str) -> str:
     )
 
 
+def _format_ts(ts: float) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(ts))
+
+
+# Same wording/status set the browser UI's ACTIVITY_LABELS uses (index.html)
+# - both read straight off /api/status, no separate signal.
+_ACTIVITY_LABELS = {
+    "received": "agent received your message...",
+    "working": "agent is working...",
+    "error": "agent hit an error",
+}
+
+
 def _url(base: str, path: str, token: str) -> str:
     sep = "&" if "?" in path else "?"
     return f"{base}{path}{sep}token={token}"
@@ -145,12 +158,25 @@ def cmd_send(args: argparse.Namespace, base: str, token: str) -> None:
 
     since = result["id"]
     deadline = time.time() + args.timeout
+    # Status notices go to stderr, not stdout - keeps stdout exclusively the
+    # final reply text (e.g. `nix run .#chat -- send "hi" --wait > reply.txt`
+    # stays clean), and this is otherwise silent for up to --timeout with no
+    # sign anything is happening.
+    last_status = None
     while time.time() < deadline:
+        try:
+            status = _get(base, "/api/status", token).get("status")
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+            status = None
+        if status != last_status and _ACTIVITY_LABELS.get(status):
+            print(f"({_ACTIVITY_LABELS[status]})", file=sys.stderr)
+        last_status = status
+
         data = _get(base, f"/api/messages?since={since}", token)
         for m in data["messages"]:
             since = max(since, m["id"])
             if m["role"] != "user":
-                print(_format_reply(m["text"]))
+                print(f"[{_format_ts(m['ts'])}] {_format_reply(m['text'])}")
                 return
         time.sleep(1)
 
@@ -163,7 +189,18 @@ def _poll_loop(base: str, token: str, since: "list[int]", stop: threading.Event)
     independent of whether the user is mid-input. Skips user messages - the
     terminal's own line echo already showed those when typed. `since` is a
     1-element list used as a mutable box so this thread and the main thread
-    share one cursor without needing a lock for a single int assignment."""
+    share one cursor without needing a lock for a single int assignment.
+
+    Also polls /api/status on the same cadence and prints a one-line notice
+    on each status change (received/working/error) - same signal the
+    browser UI's activity indicator shows, just as transition lines instead
+    of a continuously-updated one, matching how new messages are already
+    printed here rather than attempting an in-place-updating spinner: this
+    thread runs concurrently with the main thread's blocking `input()`
+    prompt, so redrawing a single line in place would fight the prompt's
+    own redraw rather than just interleaving with it (see this module's own
+    docstring on that trade-off)."""
+    last_status = None
     while not stop.is_set():
         try:
             data = _get(base, f"/api/messages?since={since[0]}", token)
@@ -171,9 +208,21 @@ def _poll_loop(base: str, token: str, since: "list[int]", stop: threading.Event)
                 since[0] = max(since[0], m["id"])
                 if m["role"] == "user":
                     continue
-                print(f"\n[agent] {_format_reply(m['text'])}\n{PROMPT}", end="", flush=True)
+                print(
+                    f"\n[agent {_format_ts(m['ts'])}] {_format_reply(m['text'])}\n{PROMPT}",
+                    end="", flush=True,
+                )
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
             pass  # transient - the next poll retries; don't kill the thread over one bad response
+
+        try:
+            status = _get(base, "/api/status", token).get("status")
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+            status = None
+        if status != last_status and _ACTIVITY_LABELS.get(status):
+            print(f"\n({_ACTIVITY_LABELS[status]})\n{PROMPT}", end="", flush=True)
+        last_status = status
+
         stop.wait(1.0)
 
 
