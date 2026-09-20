@@ -484,6 +484,24 @@
                 dc rm -sf git-mcp
                 ${pkgs.docker}/bin/docker volume rm "$gateway_volume"
                 dc up -d --force-recreate git-mcp
+                # A recreated git-mcp has a fresh, empty ssh-agent
+                # (deliberately never persisted to disk - see state.py) -
+                # confirmed live that skipping this leaves a
+                # passphrase-protected deploy key's initial clone failing
+                # with "Permission denied (publickey)" until something
+                # unlocks it. Same wait-then-unlock as `up` above.
+                echo "== Checking whether git-mcp's deploy key needs a passphrase ==" >&2
+                attempt=0
+                while ! dc exec -T git-mcp \
+                    test -S /tmp/git-mcp-agent.sock >/dev/null 2>&1; do
+                  attempt=$((attempt + 1))
+                  if [ "$attempt" -ge 20 ]; then
+                    echo "git-mcp not ready yet - run 'nix run .#git-unlock -- $env_file' manually once it is" >&2
+                    break
+                  fi
+                  sleep 0.5
+                done
+                dc exec git-mcp git-mcp-unlock || true
                 # orchestrator holds a persistent MCP connection to git-mcp
                 # (see its own startup log) that goes stale the moment
                 # git-mcp is recreated - confirmed live as a 400 Bad
@@ -508,12 +526,25 @@
               dc rm -sf workspace git-mcp
               ${pkgs.docker}/bin/docker volume rm "$repo_volume" "$gateway_volume"
               dc up -d --force-recreate workspace git-mcp
-              # See the WORKSPACE_HOST_PATH branch above - git-mcp being
-              # recreated goes stale in orchestrator's persistent MCP
-              # connection to it either way. workspace itself isn't an MCP
-              # server orchestrator ever connects to directly (only
-              # workspace-mcp is, which this doesn't touch), so this is
-              # only needed because of git-mcp.
+              # See the WORKSPACE_HOST_PATH branch above - same
+              # fresh-ssh-agent-needs-unlocking gap, same fix.
+              echo "== Checking whether git-mcp's deploy key needs a passphrase ==" >&2
+              attempt=0
+              while ! dc exec -T git-mcp \
+                  test -S /tmp/git-mcp-agent.sock >/dev/null 2>&1; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 20 ]; then
+                  echo "git-mcp not ready yet - run 'nix run .#git-unlock -- $env_file' manually once it is" >&2
+                  break
+                fi
+                sleep 0.5
+              done
+              dc exec git-mcp git-mcp-unlock || true
+              # git-mcp being recreated goes stale in orchestrator's
+              # persistent MCP connection to it either way. workspace
+              # itself isn't an MCP server orchestrator ever connects to
+              # directly (only workspace-mcp is, which this doesn't
+              # touch), so this is only needed because of git-mcp.
               echo "== Restarting orchestrator so its connection to git-mcp is fresh ==" >&2
               dc restart orchestrator
             '');
