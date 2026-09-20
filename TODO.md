@@ -97,6 +97,28 @@ Ordered easiest → hardest to execute.
   adapted protocol. Large, mostly-greenfield effort with its own release/
   packaging surface outside this repo's current stack.
 
+- Support running on Apple Containers (macOS)
+  This was actually one of the two named MicroVM backends in README's
+  original design principles ("Docker Sandboxes, Apple Containers") -
+  never implemented. Today's stack is Docker-specific top to bottom, not
+  just at the `WORKSPACE_RUNTIME=kata`-style OCI-runtime layer: all six
+  services are orchestrated by docker-compose.yml, workspace-mcp shells
+  out to `docker exec` over `DOCKER_HOST`, and docker-socket-proxy fronts
+  the Docker socket specifically (ADR-0002 §3) - none of which has a
+  drop-in equivalent on Apple's `container` CLI, which (as of this
+  writing) is a single-container run/build tool with no known
+  Compose-equivalent multi-service orchestration or socket-proxy
+  analogue. This is a much bigger lift than swapping a runtime flag -
+  closer to a second orchestration backend alongside docker-compose than
+  a config option. One genuinely reusable piece already exists: git-mcp's
+  in-process ssh-agent (git-mcp-unlock, state.py) was deliberately built
+  to avoid forwarding a host ssh-agent socket in, specifically because
+  "Kata/Apple-containerization" breaks cross-kernel AF_UNIX sockets - so
+  that particular sub-problem is already solved, not still open. Hardest
+  item here after Claude OAuth - large, cross-cutting, but at least
+  self-directed research rather than blocked on an external party's
+  decision.
+
 - Claude OAUTH... Will this be possible?
   Open feasibility question, not just an implementation task - depends on
   what Anthropic's OAuth support actually allows for a non-first-party
