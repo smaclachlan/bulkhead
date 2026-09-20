@@ -156,14 +156,20 @@ they'd cost to fix:
   resolved remote host), not a compose-only change, and is tracked as a
   follow-up in the same category as the docker-socket-proxy's
   category-only gap (README's Further Threats item 7).
-- **`git-mcp` still runs as root, without a read-only root filesystem.**
-  `cap_drop: [ALL]` and `no-new-privileges` are applied in
-  `docker-compose.yml` (a real, if partial, second layer - even full RCE
-  gains no Linux capabilities and can't re-acquire any via a setuid/setcap
-  binary), but the container needs to write ssh-agent's socket, the
-  deploy key's private copy, and bundle temp files, so `read_only: true`
-  plus a non-root user (chowning a fixed UID onto the `git-gateway-data`
-  volume at startup) is left as a further, untested-here hardening step.
+- **`git-mcp` still runs as root, with its full default capability set, and
+  without a read-only root filesystem.** `no-new-privileges` is applied in
+  `docker-compose.yml` (a real, if narrow, second layer - the process can't
+  re-acquire privilege via a setuid/setcap binary even under RCE), but
+  `cap_drop: [ALL]` was tried and reverted (confirmed live): it also strips
+  `CAP_DAC_OVERRIDE`, which root needs to read the bind-mounted deploy key
+  whenever its host-side file isn't owned by UID 0 - the normal case - so
+  `_prepare_ssh_key` failed with `EACCES` on every single start, before
+  ssh-agent ever came up. A correct version of this (`cap_drop: [ALL]` plus
+  `cap_add` for just `DAC_OVERRIDE`/`CHOWN`/`FOWNER`, or a fixed non-root
+  UID the deploy key is `chown`-able to instead) is a further hardening
+  step, not done here - along with `read_only: true` (ssh-agent's socket,
+  the deploy key's private copy, and bundle temp files all need somewhere
+  writable, which a plain non-root user doesn't resolve by itself).
 - **A `git-mcp` RCE can still push, and can still use the key.** Nothing in
   this ADR (or ADR-0003) stops code execution *inside `git-mcp`'s own
   process* - a bug in its Python, not a git side effect - from calling

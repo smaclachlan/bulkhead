@@ -214,18 +214,22 @@ services:
   # can be induced to run attacker-supplied code (see state.py's
   # HARDENED_GIT_ARGS and its module docstring).
   #
-  # cap_drop/no-new-privileges below are a second, container-level layer of
-  # the same "no side effects here" property the code enforces - even a full
-  # RCE in this process gains no Linux capabilities and can't re-acquire any
-  # via a setuid/setcap binary. Still runs as root and without a read-only
-  # root filesystem (ssh-agent's socket, the deploy key's private copy, and
-  # bundle tempfiles all need somewhere writable) - a non-root user plus
-  # `read_only: true` is a further hardening step, not done here; see
+  # no-new-privileges/pids_limit below are a second, container-level layer
+  # of the same "no side effects here" property the code enforces - even a
+  # full RCE in this process can't re-acquire privilege via a setuid/setcap
+  # binary. NOT cap_drop: [ALL] - tried and reverted (confirmed live):
+  # dropping every capability also strips CAP_DAC_OVERRIDE, which root needs
+  # to read the bind-mounted deploy key when its host-side owner isn't UID 0
+  # (the normal case) - state.py's _prepare_ssh_key crashed on every start
+  # with EACCES on /run/secrets/deploy_key, before ssh-agent ever came up.
+  # Still runs as root and without a read-only root filesystem (ssh-agent's
+  # socket, the deploy key's private copy, and bundle tempfiles all need
+  # somewhere writable) - a non-root user plus `read_only: true` is a
+  # further hardening step, not done here; see
   # docs/adr/0004-git-mcp-bundle-relay.md's Consequences.
   git-mcp:
     image: bulkhead-git-mcp:dev
     networks: [internal-git, git-egress]
-    cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 128
     volumes:
